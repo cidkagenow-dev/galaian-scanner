@@ -50,6 +50,10 @@ const BRIDGEABLE_BACK = new Set(Object.keys(BRIDGEABLE));
 // Blacklisted tokens (false positives, dead tokens, etc.)
 const SKIP = new Set(["MOON", "TestToken1", "TestToken3", "Token", "GSWAP", "SILK", "ETIME", "GFINANCE", "GISD", "RBIT"]);
 
+// Min side TVL threshold — skip pools where the smaller side is below this
+// Set via ?minSide= query param, default 0 (no filter)
+const DEFAULT_MIN_SIDE_TVL = 0;
+
 // Extra CG ID mapping for tokens not in arb API
 const EXTRA_CG_IDS: Record<string, string> = {
   GSUSDT: "tether",
@@ -105,7 +109,9 @@ async function fetchAllPools(): Promise<any[]> {
 export const revalidate = 30;
 export const maxDuration = 30;
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const minSideTvlParam = parseFloat(searchParams.get("minSide") || "0") || DEFAULT_MIN_SIDE_TVL;
   try {
     const startTime = Date.now();
 
@@ -208,6 +214,10 @@ export async function GET() {
       const maxSideRatio = totalSideTvl > 0 ? Math.max(token0TvlUsd, token1TvlUsd) / totalSideTvl : 0;
 
       // Note: imbalance is flagged as warning, not filtered
+
+      // Skip pools where min side is below threshold
+      const minSideTvl = Math.min(token0TvlUsd, token1TvlUsd);
+      if (minSideTvlParam > 0 && minSideTvl < minSideTvlParam) continue;
 
       // Check both tokens
       for (const sym of [t0, t1]) {

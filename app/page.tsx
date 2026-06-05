@@ -84,12 +84,13 @@ export default function Home() {
   const [countdown, setCountdown] = useState(30);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [minTvl, setMinTvl] = useState<number>(0);
+  const [minSide, setMinSide] = useState<number>(0);
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const r = await fetch("/api/scan");
+      const r = await fetch("/api/scan" + (minSide > 0 ? `?minSide=${minSide}` : ""));
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setData(await r.json());
       setCountdown(30);
@@ -113,6 +114,7 @@ export default function Home() {
   let opps = data?.opportunities ?? [];
   if (search) { const q = search.toLowerCase(); opps = opps.filter(o => o.token.toLowerCase().includes(q) || o.pairName.toLowerCase().includes(q)); }
   if (minTvl > 0) { opps = opps.filter(o => o.poolTvl >= minTvl); }
+  if (minSide > 0) { opps = opps.filter(o => Math.min(o.token0TvlUsd || 0, o.token1TvlUsd || 0) >= minSide); }
   opps = [...opps].sort((a, b) => {
     const va = (a as any)[sortKey] ?? 0;
     const vb = (b as any)[sortKey] ?? 0;
@@ -153,6 +155,7 @@ export default function Home() {
       <div className="filter-bar">
         <input className="search-input" placeholder="🔍 Search token or pair..." value={search} onChange={e => setSearch(e.target.value)} />
         <div className="tvl-filter"><label>Min TVL $</label><input type="number" className="tvl-input" value={minTvl} onChange={e => setMinTvl(Number(e.target.value) || 0)} placeholder="0" min={0} step={100} /></div>
+        <div className="tvl-filter"><label>Min Side $</label><input type="number" className="tvl-input" value={minSide} onChange={e => { const v = Number(e.target.value) || 0; setMinSide(v); }} placeholder="0" min={0} step={10} /></div>
         <div className="legend">
           <span className="legend-item"><span className="dot green" />Breakeven = max trade where profit=$0</span>
           <span className="legend-item"><span className="dot yellow" />Profitable = trade keeping 30% of spread</span>
