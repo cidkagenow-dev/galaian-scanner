@@ -1,80 +1,60 @@
 import { NextResponse } from "next/server";
 
 // ─── Config ───────────────────────────────────────────────────────────
-const DEX_BACKEND = "https://dex-backend-prod1.defi.gala.com";
 const ARB_API = "https://arb.gala.com";
 const CG_API = "https://api.coingecko.com/api/v3";
 
-// Token key format: SYMBOL$Unit$none$none
-const tokenKey = (sym: string) => `${sym}$Unit$none$none`;
+// ─── Types ───────────────────────────────────────────────────────────
 
-// Bridgeable tokens
-const BRIDGEABLE: Record<string, { chain: string; native: string; bridge: string; cgId: string }> = {
-  GBLUM: { chain: "ton", native: "BLUM", bridge: "GalaConnect", cgId: "blum" },
-  GTON: { chain: "ton", native: "TON", bridge: "GalaConnect", cgId: "the-open-network" },
-  GALA: { chain: "ethereum", native: "GALA", bridge: "GalaConnect", cgId: "gala" },
-  GWETH: { chain: "ethereum", native: "ETH", bridge: "GalaConnect", cgId: "ethereum" },
-  GWBTC: { chain: "ethereum", native: "BTC", bridge: "GalaConnect", cgId: "bitcoin" },
-  GUSDT: { chain: "ethereum", native: "USDT", bridge: "GalaConnect", cgId: "tether" },
-  GUSDC: { chain: "ethereum", native: "USDC", bridge: "GalaConnect", cgId: "usd-coin" },
-  GSOL: { chain: "solana", native: "SOL", bridge: "GalaConnect", cgId: "solana" },
-  GTRUMP: { chain: "solana", native: "TRUMP", bridge: "GalaConnect", cgId: "official-trump" },
-  GMEW: { chain: "solana", native: "MEW", bridge: "GalaConnect", cgId: "cat-in-a-dogs-world" },
-  GUFD: { chain: "solana", native: "UFD", bridge: "GalaConnect", cgId: "unicorn-fart-dust" },
+interface BridgeInfo {
+  chain: string;
+  native: string;
+  bridge: string;
+  cgId: string;
+  isStablecoin: boolean;
+}
+
+const BRIDGEABLE: Record<string, BridgeInfo> = {
+  GALA:    { chain: "ethereum", native: "GALA",    bridge: "GalaConnect", cgId: "gala", isStablecoin: false },
+  GWBTC:   { chain: "ethereum", native: "WBTC",   bridge: "GalaConnect", cgId: "bitcoin", isStablecoin: false },
+  GWETH:   { chain: "ethereum", native: "ETH",    bridge: "GalaConnect", cgId: "ethereum", isStablecoin: false },
+  GWBNB:   { chain: "ethereum", native: "BNB",    bridge: "GalaConnect", cgId: "binancecoin", isStablecoin: false },
+  GWXRP:   { chain: "ethereum", native: "XRP",    bridge: "GalaConnect", cgId: "ripple", isStablecoin: false },
+  GWTRX:   { chain: "ethereum", native: "TRX",    bridge: "GalaConnect", cgId: "tron", isStablecoin: false },
+  GUSDT:   { chain: "ethereum", native: "USDT",   bridge: "GalaConnect", cgId: "tether", isStablecoin: true },
+  GUSDC:   { chain: "ethereum", native: "USDC",   bridge: "GalaConnect", cgId: "usd-coin", isStablecoin: true },
+  GUNI:    { chain: "ethereum", native: "UNI",    bridge: "GalaConnect", cgId: "uniswap", isStablecoin: false },
+  GPEPE:   { chain: "ethereum", native: "PEPE",   bridge: "GalaConnect", cgId: "pepe", isStablecoin: false },
+  GFLOKI:  { chain: "ethereum", native: "FLOKI",  bridge: "GalaConnect", cgId: "floki", isStablecoin: false },
+  GAAVE:   { chain: "ethereum", native: "AAVE",   bridge: "GalaConnect", cgId: "aave", isStablecoin: false },
+  GARB:    { chain: "ethereum", native: "ARB",    bridge: "GalaConnect", cgId: "arbitrum", isStablecoin: false },
+  GCRV:    { chain: "ethereum", native: "CRV",    bridge: "GalaConnect", cgId: "curve-dao-token", isStablecoin: false },
+  GENA:    { chain: "ethereum", native: "ENA",    bridge: "GalaConnect", cgId: "ethena", isStablecoin: false },
+  GAPE:    { chain: "ethereum", native: "APE",    bridge: "GalaConnect", cgId: "apecoin", isStablecoin: false },
+  GDOGS:   { chain: "ethereum", native: "DOGS",   bridge: "GalaConnect", cgId: "dogs", isStablecoin: false },
+  GSOL:    { chain: "solana", native: "SOL",      bridge: "GalaConnect", cgId: "solana", isStablecoin: false },
+  GTRUMP:  { chain: "solana", native: "TRUMP",    bridge: "GalaConnect", cgId: "official-trump", isStablecoin: false },
+  GMEW:    { chain: "solana", native: "MEW",      bridge: "GalaConnect", cgId: "cat-in-a-dogs-world", isStablecoin: false },
+  GUFD:    { chain: "solana", native: "UFD",      bridge: "GalaConnect", cgId: "unicorn-fart-dust", isStablecoin: false },
+  GFIGHT:  { chain: "solana", native: "FIGHT",    bridge: "GalaConnect", cgId: "fight-2", isStablecoin: false },
+  GPONKE:  { chain: "solana", native: "PONKE",    bridge: "GalaConnect", cgId: "ponke", isStablecoin: false },
+  GSHRAP:  { chain: "solana", native: "SHRAP",    bridge: "GalaConnect", cgId: "shrapnel-2", isStablecoin: false },
+  GBIGTIME:{ chain: "solana", native: "BIGTIME",  bridge: "GalaConnect", cgId: "big-time", isStablecoin: false },
+  GPENGU:  { chain: "solana", native: "PENGU",    bridge: "GalaConnect", cgId: "pudgy-penguins", isStablecoin: false },
+  GFARTCOIN:{ chain: "solana", native: "FARTCOIN", bridge: "GalaConnect", cgId: "fartcoin", isStablecoin: false },
+  GTON:    { chain: "ton", native: "TON",         bridge: "GalaConnect", cgId: "the-open-network", isStablecoin: false },
+  GBLUM:   { chain: "ton", native: "BLUM",        bridge: "GalaConnect", cgId: "blum", isStablecoin: false },
 };
 
-const SKIP = new Set(["GWXRP", "GWTRX", "GSUSDT", "GSUSDC", "TestToken1", "TestToken3", "Token",
-  "GFIGHT", "GSWAP", "ETIME", "SILK", "GFINANCE"]);
-const STABLES = new Set(["GUSDT", "GUSDC"]);
-const DEX_FEE = 0.3;
+const BRIDGEABLE_BACK = new Set(Object.keys(BRIDGEABLE));
 
-// ─── Types ───────────────────────────────────────────────────────────
-interface PoolData {
-  poolPair: string;
-  poolHash: string;
-  token0: string;
-  token1: string;
-  token0Price: number;
-  token1Price: number;
-  fee: number;
-  token0Tvl: number;
-  token1Tvl: number;
-  token0TvlUsd: number;
-  token1TvlUsd: number;
-  tvl: number;
-  volume1d: number;
-  volume30d: number;
-  apr1d: number;
-}
-
-interface Opportunity {
-  id: string;
-  category: string;
-  token: string;
-  spreadPct: number;
-  netSpreadPct: number;
-  buyPrice: number;
-  sellPrice: number;
-  buyOn: string;
-  sellOn: string;
-  profitAtProfitable: number;
-  confidence: string;
-  bridgeInfo: string;
-  poolTvl: number;
-  poolVol1d: number;
-  poolFee: number;
-  breakevenTrade: number;
-  profitableTrade: number;
-  impactAtBreakeven: number;
-  impactAtProfitable: number;
-  netProfitAtProfitable: number;
-  galaDexPrice: number;
-  cgPrice: number;
-  notes: string;
-}
+// CG price cache
+const cgPriceCache = new Map<string, number>();
+let GALA_USD = 0.0026;
 
 // ─── Fetch helpers ───────────────────────────────────────────────────
-async function fetchJSON<T>(url: string, timeout = 10000): Promise<T | null> {
+
+async function fetchJSON<T>(url: string, timeout = 15000): Promise<T | null> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
@@ -85,226 +65,167 @@ async function fetchJSON<T>(url: string, timeout = 10000): Promise<T | null> {
   } catch { return null; }
 }
 
-async function postJSON<T>(url: string, body: any, timeout = 10000): Promise<T | null> {
+async function fetchCGPrice(cgId: string): Promise<number> {
+  if (cgPriceCache.has(cgId)) return cgPriceCache.get(cgId)!;
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
-    const r = await fetch(url, {
+    const r = await fetch(`${CG_API}/simple/price?ids=${cgId}&vs_currencies=usd`);
+    if (!r.ok) return 0;
+    const data = await r.json();
+    const price = data[cgId]?.usd ?? 0;
+    cgPriceCache.set(cgId, price);
+    return price;
+  } catch { return 0; }
+}
+
+async function getQuote(from: string, to: string, amount: string): Promise<{
+  amountOut: number; priceImpact: number; fee: number;
+} | null> {
+  try {
+    const r = await fetch(`${ARB_API}/api/swap/quote`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: controller.signal,
+      body: JSON.stringify({
+        fromToken: from,
+        toToken: to,
+        amount,
+        userAddress: "0x0000000000000000000000000000000000000000",
+      }),
     });
-    clearTimeout(timer);
     if (!r.ok) return null;
-    return r.json();
+    const data = await r.json();
+    const q = data.quote;
+    return {
+      amountOut: parseFloat(q.amountOut),
+      priceImpact: parseFloat(q.priceImpact || "0"),
+      fee: parseFloat(q.fee || "0"),
+    };
   } catch { return null; }
 }
 
-// ─── Pool TVL fetch ──────────────────────────────────────────────────
-async function fetchAllPools(): Promise<PoolData[]> {
-  const pools: PoolData[] = [];
-  for (let page = 1; page <= 20; page++) {
-    const url = `${DEX_BACKEND}/explore/pools?limit=20&page=${page}`;
-    const data = await fetchJSON<any>(url);
-    if (!data?.data?.pools?.length) break;
-    pools.push(...data.data.pools);
-    if (pools.length >= (data.data.count || 0)) break;
-  }
-  return pools;
-}
-
-// ─── On-chain DEX prices ─────────────────────────────────────────────
-async function fetchDexPrices(symbols: string[]): Promise<Map<string, number>> {
-  const keys = symbols.map(tokenKey);
-  const data = await postJSON<any>(`${DEX_BACKEND}/v1/trade/price-multiple`, { tokens: keys });
-  const prices = new Map<string, number>();
-  if (data?.data) {
-    symbols.forEach((sym, i) => {
-      const p = parseFloat(data.data[i]);
-      if (p > 0) prices.set(sym, p);
-    });
-  }
-  return prices;
-}
-
-// ─── CoinGecko prices ────────────────────────────────────────────────
-async function fetchCGPrices(ids: string[]): Promise<Map<string, number>> {
-  if (!ids.length) return new Map();
-  const url = `${CG_API}/simple/price?ids=${ids.join(",")}&vs_currencies=usd`;
-  const data = await fetchJSON<any>(url);
-  const prices = new Map<string, number>();
-  if (data) {
-    for (const [id, val] of Object.entries(data)) {
-      prices.set(id, (val as any)?.usd || 0);
-    }
-  }
-  return prices;
-}
-
-// ─── Spread depth simulation ─────────────────────────────────────────
-function simulateSpreadDepth(
-  poolTvlUsd: number,
-  currentPrice: number,
-  feePercent: number,
-  spreadPercent: number
-): { 
-  breakevenTrade: number;     // Max trade where profit = $0
-  profitableTrade: number;    // Trade where you keep 30% of spread as profit
-  impactAtBreakeven: number;
-  impactAtProfitable: number;
-  netProfitAtProfitable: number;
-} {
-  if (poolTvlUsd < 1 || spreadPercent <= 0) {
-    return { breakevenTrade: 0, profitableTrade: 0, impactAtBreakeven: 0, impactAtProfitable: 0, netProfitAtProfitable: 0 };
-  }
-
-  // Conservative: effective liquidity is ~15% of TVL (accounts for concentrated liq, idle capital)
-  const effectiveLiquidity = poolTvlUsd * 0.15;
-
-  // Fee cost = buy fee + sell fee (both sides)
-  const totalFeeCost = feePercent * 2; // e.g., 1% pool = 2% round-trip
-
-  // Spread available after fees
-  const spreadAfterFees = spreadPercent - totalFeeCost;
-
-  // If spread < fees, no profitable trade possible
-  if (spreadAfterFees <= 0) {
-    return { breakevenTrade: 0, profitableTrade: 0, impactAtBreakeven: 0, impactAtProfitable: 0, netProfitAtProfitable: 0 };
-  }
-
-  // BREAKEVEN: spread% = impact% + fee%
-  // impact = trade / (2 × effective_liq) × 100
-  // So: spreadAfterFees = trade / (2 × eff_liq) × 100
-  // trade = spreadAfterFees / 100 × 2 × eff_liq
-  const breakevenTrade = (spreadAfterFees / 100) * 2 * effectiveLiquidity;
-  const impactAtBreakeven = spreadAfterFees; // At breakeven, impact = spreadAfterFees by definition
-
-  // PROFITABLE TRADE: keep at least 15% of the spread as profit (conservative)
-  // impact = 85% of spreadAfterFees
-  const targetImpact = spreadAfterFees * 0.85; // 85% consumed by impact, 15% = profit
-  const profitableTrade = (targetImpact / 100) * 2 * effectiveLiquidity;
-  const impactAtProfitable = targetImpact;
-  const netProfitAtProfitable = spreadPercent - totalFeeCost - targetImpact; // ~15% of spreadAfterFees
-
-  return {
-    breakevenTrade: Math.max(0, Math.round(breakevenTrade * 100) / 100),
-    profitableTrade: Math.max(0, Math.round(profitableTrade * 100) / 100),
-    impactAtBreakeven: Math.round(impactAtBreakeven * 100) / 100,
-    impactAtProfitable: Math.round(impactAtProfitable * 100) / 100,
-    netProfitAtProfitable: Math.round(netProfitAtProfitable * 100) / 100,
-  };
-}
-
 // ─── Main scanner ────────────────────────────────────────────────────
+
 export const revalidate = 30;
 export const maxDuration = 30;
 
 export async function GET() {
   try {
     const startTime = Date.now();
+    cgPriceCache.clear();
 
-    // Fetch all data in parallel
-    const [pools, arbTokens] = await Promise.all([
-      fetchAllPools(),
-      fetchJSON<any>(`${ARB_API}/api/tokens`),
-    ]);
+    // Fetch pools
+    const rawPools = await fetchJSON<any[]>(`${ARB_API}/api/pools`);
+    if (!rawPools) throw new Error("Failed to fetch pools");
 
-    // Get unique token symbols for price fetching
-    const symbols = [...new Set(pools.flatMap(p => [p.token0, p.token1]))]
-      .filter(s => !SKIP.has(s));
+    // Fetch GALA price
+    GALA_USD = await fetchCGPrice("gala") || 0.0026;
 
-    // Fetch on-chain DEX prices
-    const dexPrices = await fetchDexPrices(symbols);
+    const opportunities: any[] = [];
 
-    // Fetch CoinGecko prices for bridgeable tokens
-    const cgIds = [...new Set(Object.values(BRIDGEABLE).map(b => b.cgId).filter(Boolean))];
-    const cgPrices = await fetchCGPrices(cgIds);
+    // Process each pool
+    for (const pool of rawPools) {
+      const tokenA = pool.tokenInSymbol;
+      const tokenB = pool.tokenOutSymbol;
+      if (!tokenA || !tokenB) continue;
 
-    // Build pool lookup: symbol -> best pool (highest TVL)
-    const bestPools = new Map<string, PoolData>();
-    for (const pool of pools) {
-      const t0 = pool.token0;
-      const t1 = pool.token1;
-      // Store the highest TVL pool for each token pair
-      const key0 = `${t0}`;
-      const existing0 = bestPools.get(key0);
-      if (!existing0 || pool.tvl > existing0.tvl) {
-        bestPools.set(key0, pool);
+      // Find which token is bridgeable
+      const bridgeA = BRIDGEABLE[tokenA];
+      const bridgeB = BRIDGEABLE[tokenB];
+      if (!bridgeA && !bridgeB) continue;
+
+      // Determine arb direction
+      const token = bridgeA ? tokenA : tokenB;
+      const bridge = bridgeA ? bridgeA : bridgeB!;
+      const exitAsset = bridgeA ? tokenB : tokenA;
+      const exitBridgeable = BRIDGEABLE_BACK.has(exitAsset);
+      const exitBridgeInfo = BRIDGEABLE[exitAsset];
+
+      const poolId = pool.id?.toString() || `${tokenA}-${tokenB}`;
+      const pairName = `${tokenA}/${tokenB}`;
+
+      // Get CoinGecko price
+      const cgPrice = await fetchCGPrice(bridge.cgId);
+      if (!cgPrice) continue;
+
+      // Get quote for 1 unit
+      const quote = await getQuote(token, exitAsset, "1");
+      if (!quote) continue;
+
+      const poolFee = quote.fee;
+      const priceImpact = quote.priceImpact;
+
+      // Calculate GalaSwap price in USD
+      let galaDexPriceUsd = 0;
+      if (exitBridgeInfo?.isStablecoin) {
+        galaDexPriceUsd = quote.amountOut;
+      } else if (exitAsset === "GALA") {
+        galaDexPriceUsd = quote.amountOut * GALA_USD;
+      } else {
+        const exitCgId = exitBridgeInfo?.cgId;
+        if (exitCgId) {
+          const exitPrice = await fetchCGPrice(exitCgId);
+          galaDexPriceUsd = quote.amountOut * exitPrice;
+        }
       }
-    }
 
-    // Scan for opportunities
-    const opportunities: Opportunity[] = [];
+      if (!galaDexPriceUsd || galaDexPriceUsd <= 0) continue;
 
-    for (const [sym, bridge] of Object.entries(BRIDGEABLE)) {
-      if (SKIP.has(sym) || STABLES.has(sym)) continue;
+      // Spread calculation
+      const spreadPct = ((galaDexPriceUsd - cgPrice) / cgPrice) * 100;
+      if (spreadPct < 0.5) continue;
 
-      const dexPrice = dexPrices.get(sym);
-      const cgPrice = cgPrices.get(bridge.cgId);
-      if (!dexPrice || !cgPrice || cgPrice === 0) continue;
+      // Net spread (buy external free, bridge free, sell on GalaSwap = fee + impact)
+      const netSpreadPct = spreadPct - poolFee - priceImpact;
 
-      // Find the GALA/X pool for TVL data
-      const pool = pools.find(p =>
-        (p.token0 === "GALA" && p.token1 === sym) ||
-        (p.token1 === "GALA" && p.token0 === sym)
-      );
-
-      const poolTvl = pool?.tvl || 0;
-      const poolVol1d = pool?.volume1d || 0;
-      const poolFee = pool?.fee || 1;
-
-      // Calculate spread
-      const diff = dexPrice - cgPrice;
-      const spread = (Math.abs(diff) / cgPrice) * 100;
-      if (spread < 0.5) continue;
-
-      // Simulate spread depth
-      const depth = simulateSpreadDepth(poolTvl, dexPrice, poolFee, spread);
-
-      // Net spread after fees (not including impact — impact depends on trade size)
-      const netSpreadAfterFees = spread - (poolFee * 2);
+      // Trade sizing (simplified)
+      const baseTrade = 1000;
+      const breakevenTrade = spreadPct > (poolFee + priceImpact) 
+        ? baseTrade * (spreadPct / (poolFee + priceImpact)) 
+        : 0;
+      const profitableTrade = breakevenTrade * 0.7;
+      const impactAtBreakeven = priceImpact * (breakevenTrade / baseTrade);
+      const impactAtProfitable = priceImpact * (profitableTrade / baseTrade);
+      const netProfitAtProfitable = spreadPct - poolFee - impactAtProfitable;
 
       // Confidence
-      let conf = "low";
-      if (poolTvl > 10000 && poolVol1d > 1000 && spread > 3 && depth.profitableTrade > 500) conf = "high";
-      else if (poolTvl > 1000 && spread > 2 && depth.profitableTrade > 100) conf = "medium";
-
-      // Direction
-      const buyOn = diff > 0 ? `${bridge.chain} (external)` : "GalaSwap DEX";
-      const sellOn = diff > 0 ? "GalaSwap DEX" : `${bridge.chain} (external)`;
+      let confidence = "low";
+      if (spreadPct > 5 && netSpreadPct > 2) confidence = "high";
+      else if (spreadPct > 3 && netSpreadPct > 1) confidence = "medium";
 
       // Notes
       const notes: string[] = [];
-      if (poolTvl < 1000) notes.push(`⚠️ Very low TVL ($${poolTvl.toFixed(0)})`);
-      if (poolTvl < 100) notes.push(`🚫 Pool nearly empty`);
-      if (depth.breakevenTrade < 100) notes.push(`Breakeven ~$${depth.breakevenTrade}`);
-      if (depth.profitableTrade < 50) notes.push(`Profitable only < $${depth.profitableTrade}`);
+      if (!exitBridgeable) notes.push(`⚠️ ${exitAsset} not bridgeable back`);
+      if (breakevenTrade < 100) notes.push(`Low liquidity`);
 
       opportunities.push({
-        id: `gvc-${sym}`,
-        category: STABLES.has(sym) ? "depeg" : "galavscg",
-        token: sym,
-        spreadPct: Math.round(spread * 100) / 100,
-        netSpreadPct: Math.round(netSpreadAfterFees * 100) / 100,
-        buyPrice: diff > 0 ? cgPrice : dexPrice,
-        sellPrice: diff > 0 ? dexPrice : cgPrice,
-        buyOn,
-        sellOn,
-        profitAtProfitable: Math.round(Math.max(0, depth.profitableTrade * (depth.netProfitAtProfitable / 100)) * 100) / 100,
-        confidence: conf,
-        bridgeInfo: `${bridge.bridge} (${bridge.chain}↔GalaChain)`,
-        poolTvl: Math.round(poolTvl * 100) / 100,
-        poolVol1d: Math.round(poolVol1d * 100) / 100,
-        poolFee,
-        breakevenTrade: Math.round(depth.breakevenTrade),
-        profitableTrade: Math.round(depth.profitableTrade),
-        impactAtBreakeven: depth.impactAtBreakeven,
-        impactAtProfitable: depth.impactAtProfitable,
-        netProfitAtProfitable: depth.netProfitAtProfitable,
-        galaDexPrice: dexPrice,
+        id: `${poolId}-${token}`,
+        poolId,
+        tokenA,
+        tokenB,
+        pairName,
+        poolFee: Math.round(poolFee * 100) / 100,
+        poolTvl: 0,
+        poolVol1d: 0,
+        token,
+        tokenImage: bridgeA ? pool.tokenInImage : pool.tokenOutImage,
+        galaDexPrice: quote.amountOut,
+        galaDexPriceUsd: Math.round(galaDexPriceUsd * 1000000) / 1000000,
         cgPrice,
+        spreadPct: Math.round(spreadPct * 100) / 100,
+        netSpreadPct: Math.round(netSpreadPct * 100) / 100,
+        buyOn: `${bridge.chain} (external)`,
+        sellOn: `GalaSwap ${pairName}`,
+        exitAsset,
+        exitAssetBridgeable: exitBridgeable,
+        exitAssetBridgeChain: exitBridgeInfo?.chain || "unknown",
+        breakevenTrade: Math.round(breakevenTrade),
+        profitableTrade: Math.round(profitableTrade),
+        impactAtBreakeven: Math.round(impactAtBreakeven * 100) / 100,
+        impactAtProfitable: Math.round(impactAtProfitable * 100) / 100,
+        netProfitAtProfitable: Math.round(netProfitAtProfitable * 100) / 100,
+        confidence,
         notes: notes.join(" | "),
+        bridgeInfo: `${bridge.bridge} (${bridge.chain}↔GalaChain)`,
+        bridgeFee: 0,
       });
     }
 
@@ -316,8 +237,8 @@ export async function GET() {
     return NextResponse.json({
       timestamp: new Date().toISOString(),
       elapsed,
-      poolCount: pools.length,
-      tokenCount: symbols.length,
+      poolCount: rawPools.length,
+      tokenCount: new Set(opportunities.map(o => o.token)).size,
       opportunities,
       stats: {
         total: opportunities.length,
