@@ -5,7 +5,7 @@ const ARB_API = "https://arb.gala.com";
 const DEX_BACKEND = "https://dex-backend-prod1.defi.gala.com";
 const CG_API = "https://api.coingecko.com/api/v3";
 
-// ─── Bridge Map ──────────────────────────────────────────────────────
+// ─── Bridge Map (for bridge info only, not filtering) ─────────────────
 
 interface BridgeInfo {
   chain: string;
@@ -97,225 +97,194 @@ export async function GET() {
   try {
     const startTime = Date.now();
 
-    // Fetch from both sources in parallel
-    const [rawPools, arbTokens, dexPools] = await Promise.all([
+    // Fetch from all sources in parallel
+    const [arbPools, arbTokens, dexPools] = await Promise.all([
       fetchJSON<any[]>(`${ARB_API}/api/pools`),
       fetchJSON<any[]>(`${ARB_API}/api/tokens`),
       fetchAllPools(),
     ]);
 
-    if (!rawPools || !arbTokens) throw new Error("Failed to fetch data");
+    if (!arbPools || !arbTokens) throw new Error("Failed to fetch data");
 
-    // Build token price lookup: symbol -> { galaPrice, coinGeckoPrice, coinGeckoId, image, volume24h }
+    // Build token data lookup: symbol -> { galaPrice, coinGeckoPrice, coinGeckoId, image, volume24h }
     const tokenData = new Map<string, any>();
     for (const tok of arbTokens) {
       tokenData.set(tok.symbol, tok);
     }
 
-    // Build DEX pool lookup: "token0/token1" -> { tvl, volume1d, fee }
+    // Build DEX pool lookup: "token0/token1" -> { tvl, volume1d, fee, token0TvlUsd, token1TvlUsd }
     const dexPoolData = new Map<string, any>();
     for (const pool of dexPools) {
       const key = pool.poolName || `${pool.token0}/${pool.token1}`;
       dexPoolData.set(key, pool);
     }
 
-    // Build pool lookup: token symbol -> pools it appears in
-    const tokenPools = new Map<string, any[]>();
-    for (const pool of rawPools) {
-      const tA = pool.tokenInSymbol;
-      const tB = pool.tokenOutSymbol;
-      if (!tA || !tB) continue;
-      
-      if (!tokenPools.has(tA)) tokenPools.set(tA, []);
-      tokenPools.get(tA)!.push(pool);
-      
-      if (!tokenPools.has(tB)) tokenPools.set(tB, []);
-      tokenPools.get(tB)!.push(pool);
-    }
-
-    // Get CoinGecko prices for bridgeable tokens
-    const cgIds = [...new Set(Object.values(BRIDGEABLE).map(b => b.cgId).filter(Boolean))];
-    const cgPrices = await fetchCGPrices(cgIds);
+    // Get all unique CoinGecko IDs from arb tokens
+    const allCgIds = [...new Set(arbTokens.map((t: any) => t.coinGeckoId).filter(Boolean))];
+    const cgPrices = await fetchCGPrices(allCgIds);
 
     const opportunities: any[] = [];
-    const processedTokens = new Set<string>();
 
-    // Process each bridgeable token
-    for (const [sym, bridge] of Object.entries(BRIDGEABLE)) {
-      if (processedTokens.has(sym)) continue;
-      processedTokens.add(sym);
+    // Process ALL pools
+    for (const pool of arbPools) {
+      const tokenA = pool.tokenInSymbol;
+      const tokenB = pool.tokenOutSymbol;
+      if (!tokenA || !tokenB) continue;
 
-      // Get GalaSwap price from arb.gala.com
-      const tokData = tokenData.get(sym);
-      if (!tokData || !tokData.galaPrice || tokData.galaPrice === 0) continue;
+      // Get token data for both tokens
+      const tokAData = tokenData.get(tokenA);
+      const tokBData = tokenData.get(tokenB);
 
-      const galaDexPriceUsd = tokData.galaPrice;
+      // Skip if neither token has price data
+      if (!tokAData?.galaPrice && !tokBData?.galaPrice) continue;
 
-      // Get CoinGecko price
-      const cgPrice = cgPrices.get(bridge.cgId) || 0;
-      if (!cgPrice) continue;
+      // Try both tokens as the "arb token"
+      for (const [sym, symData] of [[tokenA, tokAData], [tokenB, tokBData]] as [string, any][]) {
+        if (!symData?.galaPrice || symData.galaPrice === 0) continue;
+        if (!symData?.coinGeckoId) continue;
 
-      // Spread calculation
-      const spreadPct = ((galaDexPriceUsd - cgPrice) / cgPrice) * 100;
-      if (Math.abs(spreadPct) < 0.5) continue;
+        const galaDexPriceUsd = symData.galaPrice;
+        const cgPrice = cgPrices.get(symData.coinGeckoId) || symData.coinGeckoPrice || 0;
+        if (!cgPrice) continue;
 
-      // Find best pool for this token
-      const pools = tokenPools.get(sym) || [];
-      let bestPool = null;
-      let bestExitAsset = "";
-      let bestDexPool = null;
-      
-      for (const pool of pools) {
-        const exitA = pool.tokenInSymbol === sym ? pool.tokenOutSymbol : pool.tokenInSymbol;
-        const exitBridge = BRIDGEABLE[exitA];
+        // Spread calculation
+        const spreadPct = ((galaDexPriceUsd - cgPrice) / cgPrice) * 100;
+        if (Math.abs(spreadPct) < 0.5) continue;
+
+        // Exit asset is the other token in the pair
+        const exitAsset = sym === tokenA ? tokenB : tokenA;
+        const exitBridge = BRIDGEABLE[exitAsset];
+        const exitBridgeable = BRIDGEABLE_BACK.has(exitAsset);
+        const symBridge = BRIDGEABLE[sym];
+
+        const poolId = pool.id?.toString() || `${tokenA}-${tokenB}`;
+        const pairName = `${tokenA}/${tokenB}`;
+
+        // Find matching DEX pool for TVL/volume
+        const pairName1 = `${tokenA}/${tokenB}`;
+        const pairName2 = `${tokenB}/${tokenA}`;
+        const bestDexPool = dexPoolData.get(pairName1) || dexPoolData.get(pairName2);
+
+        // Pool data from DEX backend
+        const poolTvl = bestDexPool?.tvl || 0;
+        const poolVol1d = bestDexPool?.volume1d || 0;
+        const poolFee = bestDexPool?.fee ? parseFloat(bestDexPool.fee) : 1.0;
+
+        // Net spread
+        const netSpreadPct = spreadPct - poolFee;
+
+        // Direction-aware depth
+        const dexToken0 = bestDexPool?.token0;
+        const isToken0 = dexToken0 === sym;
         
-        // Try to find matching DEX pool for TVL/volume
-        const pairName1 = `${sym}/${exitA}`;
-        const pairName2 = `${exitA}/${sym}`;
-        const dexPool = dexPoolData.get(pairName1) || dexPoolData.get(pairName2);
+        const sellSideTvl = isToken0 
+          ? (bestDexPool?.token0TvlUsd || 0)
+          : (bestDexPool?.token1TvlUsd || 0);
+        const buySideTvl = isToken0
+          ? (bestDexPool?.token1TvlUsd || 0)
+          : (bestDexPool?.token0TvlUsd || 0);
         
-        // Prefer stablecoins as exit asset
-        if (exitBridge?.isStablecoin) {
-          bestPool = pool;
-          bestExitAsset = exitA;
-          bestDexPool = dexPool;
-          break;
-        }
-        // Then prefer GALA
-        if (exitA === "GALA") {
-          bestPool = pool;
-          bestExitAsset = exitA;
-          bestDexPool = dexPool;
-        }
-        // Otherwise use first pool
-        if (!bestPool) {
-          bestPool = pool;
-          bestExitAsset = exitA;
-          bestDexPool = dexPool;
-        }
+        const effectiveLiq = spreadPct > 0 
+          ? sellSideTvl * 0.15
+          : buySideTvl * 0.15;
+        
+        const breakevenTrade = Math.abs(spreadPct) > poolFee && effectiveLiq > 0
+          ? (Math.abs(spreadPct) - poolFee) / 100 * 2 * effectiveLiq
+          : 0;
+        const profitableTrade = breakevenTrade * 0.7;
+        
+        const impactAtBreakeven = breakevenTrade > 0 ? (breakevenTrade / (2 * effectiveLiq)) * 100 : 0;
+        const impactAtProfitable = profitableTrade > 0 ? (profitableTrade / (2 * effectiveLiq)) * 100 : 0;
+        const netProfitAtProfitable = Math.abs(spreadPct) - poolFee - impactAtProfitable;
+
+        // Confidence
+        let confidence: "high" | "medium" | "low" = "low";
+        if (poolTvl > 10000 && poolVol1d > 1000 && Math.abs(spreadPct) > 3 && netProfitAtProfitable > 1) confidence = "high";
+        else if (poolTvl > 1000 && Math.abs(spreadPct) > 2 && netProfitAtProfitable > 0.5) confidence = "medium";
+
+        // Direction
+        const buyOn = spreadPct > 0 
+          ? (symBridge ? `${symBridge.chain} (external)` : "External")
+          : "GalaSwap DEX";
+        const sellOn = spreadPct > 0 
+          ? "GalaSwap DEX" 
+          : (symBridge ? `${symBridge.chain} (external)` : "External");
+
+        // Bridge info
+        const bridgeInfo = symBridge 
+          ? `${symBridge.bridge} (${symBridge.chain}↔GalaChain)`
+          : "Not bridgeable";
+
+        // Notes
+        const notes: string[] = [];
+        if (!symBridge) notes.push(`⚠️ ${sym} not bridgeable`);
+        if (!exitBridgeable) notes.push(`⚠️ ${exitAsset} not bridgeable back`);
+        if (poolTvl < 1000) notes.push(`⚠️ Very low TVL ($${poolTvl.toFixed(0)})`);
+        if (poolTvl < 100) notes.push(`🚫 Pool nearly empty`);
+
+        opportunities.push({
+          id: `${poolId}-${sym}`,
+          poolId,
+          tokenA,
+          tokenB,
+          pairName,
+          poolFee: Math.round(poolFee * 100) / 100,
+          poolTvl: Math.round(poolTvl),
+          poolVol1d: Math.round(poolVol1d),
+          token: sym,
+          tokenImage: symData.image || "",
+          galaDexPrice: galaDexPriceUsd,
+          galaDexPriceUsd: Math.round(galaDexPriceUsd * 1000000) / 1000000,
+          cgPrice,
+          spreadPct: Math.round(spreadPct * 100) / 100,
+          netSpreadPct: Math.round(netSpreadPct * 100) / 100,
+          buyOn,
+          sellOn,
+          exitAsset,
+          exitAssetBridgeable: exitBridgeable,
+          exitAssetBridgeChain: exitBridge?.chain || "unknown",
+          bridgeable: !!symBridge,
+          breakevenTrade: Math.round(breakevenTrade),
+          profitableTrade: Math.round(profitableTrade),
+          impactAtBreakeven: Math.round(impactAtBreakeven * 100) / 100,
+          impactAtProfitable: Math.round(impactAtProfitable * 100) / 100,
+          netProfitAtProfitable: Math.round(netProfitAtProfitable * 100) / 100,
+          confidence,
+          notes: notes.join(" | "),
+          bridgeInfo,
+          bridgeFee: 0,
+        });
       }
-
-      if (!bestPool) continue;
-
-      const exitAsset = bestExitAsset;
-      const exitBridgeable = BRIDGEABLE_BACK.has(exitAsset);
-      const exitBridgeInfo = BRIDGEABLE[exitAsset];
-      const poolId = bestPool.id?.toString() || `${sym}-${exitAsset}`;
-      const pairName = `${sym}/${exitAsset}`;
-
-      // Pool data from DEX backend
-      const poolTvl = bestDexPool?.tvl || 0;
-      const poolVol1d = bestDexPool?.volume1d || 0;
-      const poolFee = bestDexPool?.fee ? parseFloat(bestDexPool.fee) : 1.0;
-
-      // Net spread (buy external free, bridge free, sell on GalaSwap = fee)
-      const netSpreadPct = spreadPct - poolFee;
-
-
-      // Direction-aware depth: use correct side liquidity
-      // token0 = first token in DEX pool, token1 = second token
-      const dexToken0 = bestDexPool?.token0;
-      const isToken0 = dexToken0 === sym;
-      
-      // If selling bridgeable token (spread > 0): use bridgeable token side
-      // If buying bridgeable token (spread < 0): use exit asset side
-      const sellSideTvl = isToken0 
-        ? (bestDexPool?.token0TvlUsd || 0)
-        : (bestDexPool?.token1TvlUsd || 0);
-      const buySideTvl = isToken0
-        ? (bestDexPool?.token1TvlUsd || 0)
-        : (bestDexPool?.token0TvlUsd || 0);
-      
-      // For CLMM pools, effective liquidity is ~15% of side TVL
-      const effectiveLiq = spreadPct > 0 
-        ? sellSideTvl * 0.15   // Selling into pool: use sell side
-        : buySideTvl * 0.15;   // Buying from pool: use buy side
-      
-      const breakevenTrade = Math.abs(spreadPct) > poolFee && effectiveLiq > 0
-        ? (Math.abs(spreadPct) - poolFee) / 100 * 2 * effectiveLiq
-        : 0;
-      const profitableTrade = breakevenTrade * 0.7;
-      
-      // Impact at trade sizes
-      const impactAtBreakeven = breakevenTrade > 0 ? (breakevenTrade / (2 * effectiveLiq)) * 100 : 0;
-      const impactAtProfitable = profitableTrade > 0 ? (profitableTrade / (2 * effectiveLiq)) * 100 : 0;
-      const netProfitAtProfitable = Math.abs(spreadPct) - poolFee - impactAtProfitable;
-
-
-
-
-
-
-
-
-
-
-      // Confidence
-      let confidence: "high" | "medium" | "low" = "low";
-      if (poolTvl > 10000 && poolVol1d > 1000 && spreadPct > 3 && netProfitAtProfitable > 1) confidence = "high";
-      else if (poolTvl > 1000 && spreadPct > 2 && netProfitAtProfitable > 0.5) confidence = "medium";
-
-      // Direction
-      const buyOn = spreadPct > 0 ? `${bridge.chain} (external)` : "GalaSwap DEX";
-      const sellOn = spreadPct > 0 ? `GalaSwap DEX` : `${bridge.chain} (external)`;
-
-      // Notes
-      const notes: string[] = [];
-      if (!exitBridgeable) notes.push(`⚠️ ${exitAsset} not bridgeable back`);
-      if (poolTvl < 1000) notes.push(`⚠️ Very low TVL ($${poolTvl.toFixed(0)})`);
-      if (poolTvl < 100) notes.push(`🚫 Pool nearly empty`);
-      if (breakevenTrade < 100 && poolTvl > 0) notes.push(`Breakeven ~$${breakevenTrade.toFixed(0)}`);
-
-      opportunities.push({
-        id: `${poolId}-${sym}`,
-        poolId,
-        tokenA: sym,
-        tokenB: exitAsset,
-        pairName,
-        poolFee: Math.round(poolFee * 100) / 100,
-        poolTvl: Math.round(poolTvl),
-        poolVol1d: Math.round(poolVol1d),
-        token: sym,
-        tokenImage: tokData.image || "",
-        galaDexPrice: galaDexPriceUsd,
-        galaDexPriceUsd: Math.round(galaDexPriceUsd * 1000000) / 1000000,
-        cgPrice,
-        spreadPct: Math.round(spreadPct * 100) / 100,
-        netSpreadPct: Math.round(netSpreadPct * 100) / 100,
-        buyOn,
-        sellOn,
-        exitAsset,
-        exitAssetBridgeable: exitBridgeable,
-        exitAssetBridgeChain: exitBridgeInfo?.chain || "unknown",
-        breakevenTrade: Math.round(breakevenTrade),
-        profitableTrade: Math.round(profitableTrade),
-        impactAtBreakeven: Math.round(impactAtBreakeven * 100) / 100,
-        impactAtProfitable: Math.round(impactAtProfitable * 100) / 100,
-        netProfitAtProfitable: Math.round(netProfitAtProfitable * 100) / 100,
-        confidence,
-        notes: notes.join(" | "),
-        bridgeInfo: `${bridge.bridge} (${bridge.chain}↔GalaChain)`,
-        bridgeFee: 0,
-      });
     }
 
+    // Deduplicate by poolId+token (keep best spread)
+    const seen = new Map<string, any>();
+    for (const opp of opportunities) {
+      const key = `${opp.poolId}-${opp.token}`;
+      const existing = seen.get(key);
+      if (!existing || Math.abs(opp.spreadPct) > Math.abs(existing.spreadPct)) {
+        seen.set(key, opp);
+      }
+    }
+    const uniqueOpps = [...seen.values()];
+
     // Sort by net spread descending
-    opportunities.sort((a, b) => b.netSpreadPct - a.netSpreadPct);
+    uniqueOpps.sort((a, b) => b.netSpreadPct - a.netSpreadPct);
 
     const elapsed = Date.now() - startTime;
 
     return NextResponse.json({
       timestamp: new Date().toISOString(),
       elapsed,
-      poolCount: rawPools.length,
-      tokenCount: new Set(opportunities.map(o => o.token)).size,
-      opportunities,
+      poolCount: arbPools.length,
+      tokenCount: new Set(uniqueOpps.map(o => o.token)).size,
+      opportunities: uniqueOpps,
       stats: {
-        total: opportunities.length,
-        highConf: opportunities.filter(o => o.confidence === "high").length,
-        medConf: opportunities.filter(o => o.confidence === "medium").length,
-        bestSpread: opportunities[0]?.spreadPct || 0,
-        bestNet: opportunities[0]?.netSpreadPct || 0,
+        total: uniqueOpps.length,
+        highConf: uniqueOpps.filter(o => o.confidence === "high").length,
+        medConf: uniqueOpps.filter(o => o.confidence === "medium").length,
+        bestSpread: uniqueOpps[0]?.spreadPct || 0,
+        bestNet: uniqueOpps[0]?.netSpreadPct || 0,
       },
     }, {
       headers: {
