@@ -95,7 +95,7 @@ async function getQuote(from: string, to: string, amount: string): Promise<{
     const data = await r.json();
     const q = data.quote;
     return {
-      amountOut: parseFloat(q.amountOut),
+      amountOut: parseFloat(q.amountOut) / 1e18,
       priceImpact: parseFloat(q.priceImpact || "0"),
       fee: parseFloat(q.fee || "0"),
     };
@@ -147,7 +147,7 @@ export async function GET() {
       if (!cgPrice) continue;
 
       // Get quote for 1 unit
-      const quote = await getQuote(token, exitAsset, "1");
+      const quote = await getQuote(token, exitAsset, "1e18");
       if (!quote) continue;
 
       const poolFee = quote.fee;
