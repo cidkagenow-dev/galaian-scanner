@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 const ARB_API = "https://arb.gala.com";
 const CG_API = "https://api.coingecko.com/api/v3";
 
-// ─── Types ───────────────────────────────────────────────────────────
+// ─── Bridge Map ──────────────────────────────────────────────────────
 
 interface BridgeInfo {
   chain: string;
@@ -48,10 +48,6 @@ const BRIDGEABLE: Record<string, BridgeInfo> = {
 
 const BRIDGEABLE_BACK = new Set(Object.keys(BRIDGEABLE));
 
-// CG price cache
-const cgPriceCache = new Map<string, number>();
-let GALA_USD = 0.0026;
-
 // ─── Fetch helpers ───────────────────────────────────────────────────
 
 async function fetchJSON<T>(url: string, timeout = 15000): Promise<T | null> {
@@ -65,41 +61,17 @@ async function fetchJSON<T>(url: string, timeout = 15000): Promise<T | null> {
   } catch { return null; }
 }
 
-async function fetchCGPrice(cgId: string): Promise<number> {
-  if (cgPriceCache.has(cgId)) return cgPriceCache.get(cgId)!;
-  try {
-    const r = await fetch(`${CG_API}/simple/price?ids=${cgId}&vs_currencies=usd`);
-    if (!r.ok) return 0;
-    const data = await r.json();
-    const price = data[cgId]?.usd ?? 0;
-    cgPriceCache.set(cgId, price);
-    return price;
-  } catch { return 0; }
-}
-
-async function getQuote(from: string, to: string, amount: string): Promise<{
-  amountOut: number; priceImpact: number; fee: number;
-} | null> {
-  try {
-    const r = await fetch(`${ARB_API}/api/swap/quote`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fromToken: from,
-        toToken: to,
-        amount,
-        userAddress: "0x0000000000000000000000000000000000000000",
-      }),
-    });
-    if (!r.ok) return null;
-    const data = await r.json();
-    const q = data.quote;
-    return {
-      amountOut: parseFloat(q.amountOut) / 1e18,
-      priceImpact: parseFloat(q.priceImpact || "0"),
-      fee: parseFloat(q.fee || "0"),
-    };
-  } catch { return null; }
+async function fetchCGPrices(ids: string[]): Promise<Map<string, number>> {
+  if (!ids.length) return new Map();
+  const url = `${CG_API}/simple/price?ids=${ids.join(",")}&vs_currencies=usd`;
+  const data = await fetchJSON<any>(url);
+  const prices = new Map<string, number>();
+  if (data) {
+    for (const [id, val] of Object.entries(data)) {
+      prices.set(id, (val as any)?.usd || 0);
+    }
+  }
+  return prices;
 }
 
 // ─── Main scanner ────────────────────────────────────────────────────
@@ -110,14 +82,24 @@ export const maxDuration = 30;
 export async function GET() {
   try {
     const startTime = Date.now();
-    cgPriceCache.clear();
 
-    // Fetch pools
-    const rawPools = await fetchJSON<any[]>(`${ARB_API}/api/pools`);
-    if (!rawPools) throw new Error("Failed to fetch pools");
+    // Fetch pools and tokens from arb.gala.com
+    const [rawPools, arbTokens] = await Promise.all([
+      fetchJSON<any[]>(`${ARB_API}/api/pools`),
+      fetchJSON<any[]>(`${ARB_API}/api/tokens`),
+    ]);
 
-    // Fetch GALA price
-    GALA_USD = await fetchCGPrice("gala") || 0.0026;
+    if (!rawPools || !arbTokens) throw new Error("Failed to fetch data");
+
+    // Build token price lookup: symbol -> { galaPrice, coinGeckoPrice, coinGeckoId }
+    const tokenData = new Map<string, any>();
+    for (const tok of arbTokens) {
+      tokenData.set(tok.symbol, tok);
+    }
+
+    // Get CoinGecko IDs for bridgeable tokens
+    const cgIds = [...new Set(Object.values(BRIDGEABLE).map(b => b.cgId).filter(Boolean))];
+    const cgPrices = await fetchCGPrices(cgIds);
 
     const opportunities: any[] = [];
 
@@ -142,61 +124,48 @@ export async function GET() {
       const poolId = pool.id?.toString() || `${tokenA}-${tokenB}`;
       const pairName = `${tokenA}/${tokenB}`;
 
+      // Get GalaSwap price from arb.gala.com token data
+      const tokData = tokenData.get(token);
+      if (!tokData || !tokData.galaPrice || tokData.galaPrice === 0) continue;
+
+      const galaDexPriceUsd = tokData.galaPrice;
+
       // Get CoinGecko price
-      // Skip if no CoinGecko ID
-      if (!bridge.cgId) continue;
-      const cgPrice = await fetchCGPrice(bridge.cgId);
+      const cgPrice = cgPrices.get(bridge.cgId) || 0;
       if (!cgPrice) continue;
-
-      // Get quote for 1 unit
-      const quote = await getQuote(token, exitAsset, "1e18");
-      if (!quote) continue;
-
-      const poolFee = quote.fee;
-      const priceImpact = quote.priceImpact;
-
-      // Calculate GalaSwap price in USD
-      let galaDexPriceUsd = 0;
-      if (exitBridgeInfo?.isStablecoin) {
-        galaDexPriceUsd = quote.amountOut;
-      } else if (exitAsset === "GALA") {
-        galaDexPriceUsd = quote.amountOut * GALA_USD;
-      } else {
-        const exitCgId = exitBridgeInfo?.cgId;
-        if (exitCgId) {
-          const exitPrice = await fetchCGPrice(exitCgId);
-          galaDexPriceUsd = quote.amountOut * exitPrice;
-        }
-      }
-
-      if (!galaDexPriceUsd || galaDexPriceUsd <= 0) continue;
 
       // Spread calculation
       const spreadPct = ((galaDexPriceUsd - cgPrice) / cgPrice) * 100;
-      if (spreadPct < 0.5) continue;
+      if (Math.abs(spreadPct) < 0.5) continue;
 
-      // Net spread (buy external free, bridge free, sell on GalaSwap = fee + impact)
-      const netSpreadPct = spreadPct - poolFee - priceImpact;
+      // Pool fee (default 1% for most GalaSwap pools)
+      const poolFee = 1.0;
+
+      // Net spread (buy external free, bridge free, sell on GalaSwap = fee)
+      const netSpreadPct = spreadPct - poolFee;
 
       // Trade sizing (simplified)
       const baseTrade = 1000;
-      const breakevenTrade = spreadPct > (poolFee + priceImpact) 
-        ? baseTrade * (spreadPct / (poolFee + priceImpact)) 
+      const breakevenTrade = spreadPct > poolFee 
+        ? baseTrade * (spreadPct / poolFee) 
         : 0;
       const profitableTrade = breakevenTrade * 0.7;
-      const impactAtBreakeven = priceImpact * (breakevenTrade / baseTrade);
-      const impactAtProfitable = priceImpact * (profitableTrade / baseTrade);
-      const netProfitAtProfitable = spreadPct - poolFee - impactAtProfitable;
+      const impactAtBreakeven = 0; // Will estimate with TVL later
+      const impactAtProfitable = 0;
+      const netProfitAtProfitable = netSpreadPct;
 
       // Confidence
-      let confidence = "low";
+      let confidence: "high" | "medium" | "low" = "low";
       if (spreadPct > 5 && netSpreadPct > 2) confidence = "high";
       else if (spreadPct > 3 && netSpreadPct > 1) confidence = "medium";
+
+      // Direction
+      const buyOn = spreadPct > 0 ? `${bridge.chain} (external)` : "GalaSwap DEX";
+      const sellOn = spreadPct > 0 ? `GalaSwap DEX` : `${bridge.chain} (external)`;
 
       // Notes
       const notes: string[] = [];
       if (!exitBridgeable) notes.push(`⚠️ ${exitAsset} not bridgeable back`);
-      if (breakevenTrade < 100) notes.push(`Low liquidity`);
 
       opportunities.push({
         id: `${poolId}-${token}`,
@@ -208,21 +177,21 @@ export async function GET() {
         poolTvl: 0,
         poolVol1d: 0,
         token,
-        tokenImage: bridgeA ? pool.tokenInImage : pool.tokenOutImage,
-        galaDexPrice: quote.amountOut,
+        tokenImage: tokData.image || "",
+        galaDexPrice: galaDexPriceUsd,
         galaDexPriceUsd: Math.round(galaDexPriceUsd * 1000000) / 1000000,
         cgPrice,
         spreadPct: Math.round(spreadPct * 100) / 100,
         netSpreadPct: Math.round(netSpreadPct * 100) / 100,
-        buyOn: `${bridge.chain} (external)`,
-        sellOn: `GalaSwap ${pairName}`,
+        buyOn,
+        sellOn,
         exitAsset,
         exitAssetBridgeable: exitBridgeable,
         exitAssetBridgeChain: exitBridgeInfo?.chain || "unknown",
         breakevenTrade: Math.round(breakevenTrade),
         profitableTrade: Math.round(profitableTrade),
-        impactAtBreakeven: Math.round(impactAtBreakeven * 100) / 100,
-        impactAtProfitable: Math.round(impactAtProfitable * 100) / 100,
+        impactAtBreakeven,
+        impactAtProfitable,
         netProfitAtProfitable: Math.round(netProfitAtProfitable * 100) / 100,
         confidence,
         notes: notes.join(" | "),
@@ -231,7 +200,7 @@ export async function GET() {
       });
     }
 
-    // Sort by net spread
+    // Sort by net spread descending
     opportunities.sort((a, b) => b.netSpreadPct - a.netSpreadPct);
 
     const elapsed = Date.now() - startTime;
