@@ -1,5 +1,5 @@
-// GalaSwap Arb Scanner — Pool-Level Spread v4
-// Shows spread per pool, exit asset, bridgeable status, real profit
+// GalaSwap Arb Scanner — Pool-Level Spread v4.1
+// Fixed: Correct API field names from arb.gala.com
 
 const BASE_URL = "https://arb.gala.com";
 const CG_API = "https://api.coingecko.com/api/v3";
@@ -68,7 +68,7 @@ export interface ScanResult {
   };
 }
 
-// ─── Bridge Map (expanded with exit asset info) ──────────────────────
+// ─── Bridge Map ──────────────────────────────────────────────────────
 
 interface BridgeInfo {
   chain: string;
@@ -119,24 +119,31 @@ const BRIDGEABLE_BACK = new Set(Object.keys(BRIDGEABLE));
 // GALA price in USD (cached per scan)
 let GALA_USD = 0.0026; // Default fallback
 
+// CG price cache to avoid duplicate calls
+const cgPriceCache = new Map<string, number>();
+
 // ─── API Helpers ─────────────────────────────────────────────────────
 
 async function fetchJSON<T>(url: string): Promise<T> {
   const r = await fetch(url, {
-    headers: { "User-Agent": "GalaSwapArbWeb/4.0" },
+    headers: { "User-Agent": "GalaSwapArbWeb/4.1" },
   });
   if (!r.ok) throw new Error(`API ${r.status}: ${url}`);
   return r.json();
 }
 
 async function fetchCGPrice(cgId: string): Promise<number> {
+  if (cgPriceCache.has(cgId)) return cgPriceCache.get(cgId)!;
+  
   try {
     const r = await fetch(`${CG_API}/simple/price?ids=${cgId}&vs_currencies=usd`, {
-      headers: { "User-Agent": "GalaSwapArbWeb/4.0" },
+      headers: { "User-Agent": "GalaSwapArbWeb/4.1" },
     });
     if (!r.ok) return 0;
     const data = await r.json();
-    return data[cgId]?.usd ?? 0;
+    const price = data[cgId]?.usd ?? 0;
+    cgPriceCache.set(cgId, price);
+    return price;
   } catch {
     return 0;
   }
@@ -162,7 +169,7 @@ async function getQuote(
     const data = await r.json();
     const q = data.quote;
     return {
-      amountOut: parseFloat(q.amountOut) / 1e18,
+      amountOut: parseFloat(q.amountOut),
       priceImpact: parseFloat(q.priceImpact || "0"),
       fee: parseFloat(q.fee || "0"),
     };
@@ -175,6 +182,7 @@ async function getQuote(
 
 export async function scanForOpportunities(): Promise<ScanResult> {
   const startTime = Date.now();
+  cgPriceCache.clear();
 
   // Fetch pools from GalaSwap
   const rawPools = await fetchJSON<any[]>(`${BASE_URL}/api/pools`);
@@ -183,12 +191,11 @@ export async function scanForOpportunities(): Promise<ScanResult> {
   GALA_USD = await fetchCGPrice("gala") || 0.0026;
 
   const opportunities: PoolOpportunity[] = [];
-  const processedTokens = new Set<string>();
 
   // Process each pool
   for (const pool of rawPools) {
-    const tokenA = pool.token0?.symbol;
-    const tokenB = pool.token1?.symbol;
+    const tokenA = pool.tokenInSymbol;
+    const tokenB = pool.tokenOutSymbol;
     
     if (!tokenA || !tokenB) continue;
     
@@ -206,13 +213,8 @@ export async function scanForOpportunities(): Promise<ScanResult> {
     const exitBridgeable = BRIDGEABLE_BACK.has(exitAsset);
     const exitBridgeInfo = BRIDGEABLE[exitAsset];
     
-    // Skip if we already processed this token (keep best pool)
-    // We'll process all pools for now to show pool-level data
-    const poolId = pool.poolId || `${tokenA}-${tokenB}-${pool.fee}`;
+    const poolId = pool.id?.toString() || `${tokenA}-${tokenB}`;
     const pairName = `${tokenA}/${tokenB}`;
-    const poolFee = pool.fee ? parseFloat(pool.fee) * 100 : 0.3; // Convert to %
-    const poolTvl = pool.tvl ? parseFloat(pool.tvl) : 0;
-    const poolVol1d = pool.volume24h ? parseFloat(pool.volume24h) : 0;
     
     // Get CoinGecko price for the bridgeable token
     const cgPrice = await fetchCGPrice(bridge.cgId);
@@ -222,12 +224,15 @@ export async function scanForOpportunities(): Promise<ScanResult> {
     const quote = await getQuote(token, exitAsset, "1");
     if (!quote) continue;
     
+    const poolFee = quote.fee;
+    const priceImpact = quote.priceImpact;
+    
     // Calculate GalaSwap price in USD
     let galaDexPriceUsd = 0;
     if (exitBridgeInfo?.isStablecoin) {
       // Exit asset is stablecoin, amountOut is already in USD
       galaDexPriceUsd = quote.amountOut;
-    } else if (exitAsset === "GALA" || exitAsset === "GALA") {
+    } else if (exitAsset === "GALA") {
       // Exit asset is GALA, convert to USD
       galaDexPriceUsd = quote.amountOut * GALA_USD;
     } else {
@@ -239,32 +244,31 @@ export async function scanForOpportunities(): Promise<ScanResult> {
       }
     }
     
-    if (!galaDexPriceUsd) continue;
+    if (!galaDexPriceUsd || galaDexPriceUsd <= 0) continue;
     
     // Calculate spread
     const spreadPct = ((galaDexPriceUsd - cgPrice) / cgPrice) * 100;
     
-    // Skip if spread is too small (negative = buy on GalaSwap, sell external)
-    // We want positive spread = buy external, sell on GalaSwap
+    // Skip if spread is too small
     if (spreadPct < 0.5) continue;
     
-    // Net spread after swap fees (round-trip: buy on external has no fee, sell on GalaSwap has fee)
-    // Actually: buy external (no fee) → bridge (free) → sell on GalaSwap (fee)
-    // So net = spread - swap fee - price impact
-    const netSpreadPct = spreadPct - poolFee - quote.priceImpact;
+    // Net spread after swap fees
+    // Buy external (no fee) → bridge (free) → sell on GalaSwap (fee + impact)
+    const netSpreadPct = spreadPct - poolFee - priceImpact;
     
-    // Trade sizing (simplified - assume 30% effective liquidity)
-    const effectiveLiq = poolTvl * 0.30;
-    const breakevenTrade = effectiveLiq * (spreadPct / 100) / (poolFee / 100 + quote.priceImpact / 100);
-    const profitableTrade = breakevenTrade * 0.7; // 70% of breakeven keeps 30% of spread
-    const impactAtBreakeven = quote.priceImpact * (breakevenTrade / effectiveLiq);
-    const impactAtProfitable = quote.priceImpact * (profitableTrade / effectiveLiq);
+    // Trade sizing (simplified - assume $1000 base for now)
+    // In reality we'd need TVL data, but arb.gala.com doesn't provide it
+    const baseTrade = 1000;
+    const breakevenTrade = baseTrade * (spreadPct / (poolFee + priceImpact));
+    const profitableTrade = breakevenTrade * 0.7;
+    const impactAtBreakeven = priceImpact * (breakevenTrade / baseTrade);
+    const impactAtProfitable = priceImpact * (profitableTrade / baseTrade);
     const netProfitAtProfitable = spreadPct - poolFee - impactAtProfitable;
     
     // Confidence
     let confidence: "high" | "medium" | "low" = "low";
-    if (poolVol1d > 100000 && spreadPct > 5 && netSpreadPct > 2) confidence = "high";
-    else if (poolVol1d > 10000 && spreadPct > 3 && netSpreadPct > 1) confidence = "medium";
+    if (spreadPct > 5 && netSpreadPct > 2) confidence = "high";
+    else if (spreadPct > 3 && netSpreadPct > 1) confidence = "medium";
     
     opportunities.push({
       id: `${poolId}-${token}`,
@@ -272,11 +276,11 @@ export async function scanForOpportunities(): Promise<ScanResult> {
       tokenA,
       tokenB,
       pairName,
-      poolFee,
-      poolTvl,
-      poolVol1d,
+      poolFee: round2(poolFee),
+      poolTvl: 0, // Not available from API
+      poolVol1d: 0, // Not available from API
       token,
-      tokenImage: "",
+      tokenImage: bridgeA ? pool.tokenInImage : pool.tokenOutImage,
       galaDexPrice: quote.amountOut,
       galaDexPriceUsd,
       cgPrice,
