@@ -182,6 +182,36 @@ body {
   flex-wrap: wrap;
 }
 
+.tvl-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  padding: 0.3rem 0.6rem;
+  border-radius: 0.5rem;
+}
+
+.tvl-filter label {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.tvl-input {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 0.8rem;
+  width: 60px;
+  outline: none;
+  font-family: inherit;
+}
+
+.tvl-input::placeholder {
+  color: var(--text-dim);
+}
+
 .filter-btn {
   background: var(--bg-card);
   border: 1px solid var(--border);

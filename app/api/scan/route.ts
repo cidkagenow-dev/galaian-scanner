@@ -246,10 +246,114 @@ export async function GET() {
       }
     }
 
-    // Deduplicate
+
+    // DEX-only pools (not in arb API) - scan for CG price comparison
+    const arbPoolPairSet = new Set(arbPools.flatMap((p: any) => [`${p.tokenInSymbol}/${p.tokenOutSymbol}`, `${p.tokenOutSymbol}/${p.tokenInSymbol}`]));
+    
+    for (const [poolKey, dexPool] of dexPoolData) {
+      const parts = poolKey.split("/");
+      if (parts.length !== 2) continue;
+      const [t0, t1] = parts;
+      if (arbPoolPairSet.has(`${t0}/${t1}`)) continue;
+      
+      const poolTvl = dexPool?.tvl || 0;
+      const poolVol1d = dexPool?.volume1d || 0;
+      if (poolTvl < 100) continue;
+      
+      const t0Data = tokenData.get(t0);
+      const t1Data = tokenData.get(t1);
+      
+      for (const [sym, symData] of [[t0, t0Data], [t1, t1Data]] as [string, any][]) {
+        if (!symData?.galaPrice || symData.galaPrice === 0) continue;
+        if (!symData?.coinGeckoId) continue;
+        
+        const galaDexPriceUsd = symData.galaPrice;
+        const cgPrice = cgPrices.get(symData.coinGeckoId) || symData.coinGeckoPrice || 0;
+        if (!cgPrice) continue;
+        
+        const priceRatio = galaDexPriceUsd / cgPrice;
+        if (priceRatio > 100 || priceRatio < 0.01) continue;
+        
+        const rawSpread = ((galaDexPriceUsd - cgPrice) / cgPrice) * 100;
+        const profitPct = rawSpread >= 0 ? rawSpread : ((cgPrice - galaDexPriceUsd) / galaDexPriceUsd) * 100;
+        if (profitPct < 0.5) continue;
+        
+        const poolFee = dexPool?.fee ? parseFloat(dexPool.fee) : 1.0;
+        const token0TvlUsd = dexPool?.token0TvlUsd || 0;
+        const token1TvlUsd = dexPool?.token1TvlUsd || 0;
+        const totalSideTvl = token0TvlUsd + token1TvlUsd;
+        const maxSideRatio = totalSideTvl > 0 ? Math.max(token0TvlUsd, token1TvlUsd) / totalSideTvl : 0;
+        if (maxSideRatio > IMBALANCE_THRESHOLD && totalSideTvl > 100) continue;
+        
+        const isToken0 = dexPool?.token0 === sym;
+        const sellSideTvl = isToken0 ? token0TvlUsd : token1TvlUsd;
+        const buySideTvl = isToken0 ? token1TvlUsd : token0TvlUsd;
+        const effectiveLiq = rawSpread >= 0 ? sellSideTvl * 0.15 : buySideTvl * 0.15;
+        const breakevenTrade = profitPct > poolFee && effectiveLiq > 0 ? (profitPct - poolFee) / 100 * 2 * effectiveLiq : 0;
+        const profitableTrade = breakevenTrade * 0.7;
+        const impactAtBreakeven = breakevenTrade > 0 ? (breakevenTrade / (2 * effectiveLiq)) * 100 : 0;
+        const impactAtProfitable = profitableTrade > 0 ? (profitableTrade / (2 * effectiveLiq)) * 100 : 0;
+        const netProfitAtProfitable = profitPct - poolFee - impactAtProfitable;
+        
+        let confidence: "high" | "medium" | "low" = "low";
+        if (poolTvl > 10000 && poolVol1d > 1000 && profitPct > 3 && netProfitAtProfitable > 1) confidence = "high";
+        else if (poolTvl > 1000 && profitPct > 2 && netProfitAtProfitable > 0.5) confidence = "medium";
+        
+        const exitAsset = sym === t0 ? t1 : t0;
+        const exitBridge = BRIDGEABLE[exitAsset];
+        const exitBridgeable = BRIDGEABLE_BACK.has(exitAsset);
+        const symBridge = BRIDGEABLE[sym];
+        
+        const buyOn = rawSpread >= 0 ? (symBridge ? `${symBridge.chain} (external)` : "External") : "GalaSwap DEX";
+        const sellOn = rawSpread >= 0 ? "GalaSwap DEX" : (symBridge ? `${symBridge.chain} (external)` : "External");
+        const bridgeInfo = symBridge ? `${symBridge.bridge} (${symBridge.chain}↔GalaChain)` : "Not bridgeable";
+        
+        const notes: string[] = [];
+        if (!symBridge) notes.push(`⚠️ ${sym} not bridgeable`);
+        if (!exitBridgeable) notes.push(`⚠️ ${exitAsset} not bridgeable back`);
+        if (poolTvl < 1000) notes.push(`⚠️ Low TVL ($${poolTvl.toFixed(0)})`);
+        if (maxSideRatio > 0.70) notes.push(`⚠️ Imbalanced pool (${(maxSideRatio*100).toFixed(0)}/${((1-maxSideRatio)*100).toFixed(0)})`);
+        
+        opportunities.push({
+          id: `${poolKey}-${sym}-dex`,
+          poolId: poolKey,
+          tokenA: t0,
+          tokenB: t1,
+          pairName: `${t0}/${t1}`,
+          poolFee: Math.round(poolFee * 100) / 100,
+          poolTvl: Math.round(poolTvl),
+          poolVol1d: Math.round(poolVol1d),
+          token: sym,
+          tokenImage: symData.image || "",
+          galaDexPriceUsd: Math.round(galaDexPriceUsd * 1000000) / 1000000,
+          cgPrice,
+          spreadPct: Math.round(profitPct * 100) / 100,
+          netSpreadPct: Math.round((profitPct - poolFee) * 100) / 100,
+          buyOn,
+          sellOn,
+          exitAsset,
+          exitAssetBridgeable: exitBridgeable,
+          exitAssetBridgeChain: exitBridge?.chain || "unknown",
+          bridgeable: !!symBridge,
+          poolBalance: `${Math.round(maxSideRatio*100)}/${Math.round((1-maxSideRatio)*100)}`,
+          breakevenTrade: Math.round(breakevenTrade),
+          profitableTrade: Math.round(profitableTrade),
+          impactAtBreakeven: Math.round(impactAtBreakeven * 100) / 100,
+          impactAtProfitable: Math.round(impactAtProfitable * 100) / 100,
+          netProfitAtProfitable: Math.round(netProfitAtProfitable * 100) / 100,
+          confidence,
+          notes: notes.join(" | "),
+          bridgeInfo,
+          bridgeFee: 0,
+        });
+      }
+    }
+
+    // Deduplicate (normalize pair order to avoid A/B vs B/A duplicates)
     const seen = new Map<string, any>();
     for (const opp of opportunities) {
-      const key = `${opp.poolId}-${opp.token}`;
+      const [pa, pb] = opp.pairName.split("/").sort();
+      const key = `${pa}/${pb}-${opp.token}`;
       const existing = seen.get(key);
       if (!existing || Math.abs(opp.spreadPct) > Math.abs(existing.spreadPct)) {
         seen.set(key, opp);
