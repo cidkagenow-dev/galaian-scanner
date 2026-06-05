@@ -205,7 +205,7 @@ export default function Home() {
                       </td>
                       <td>
                         <div className="profit-detail">
-                          <span className="profit-val">{opp.netProfitAtProfitable.toFixed(2)}%</span>
+                          <span className="profit-val" style={{color: opp.netProfitAtProfitable >= 0 ? "var(--green)" : "var(--red)"}}>{opp.netProfitAtProfitable >= 0 ? "+" : ""}{opp.netProfitAtProfitable.toFixed(2)}%</span>
                           <div className="sub">{fmtVol(opp.profitableTrade)}→${Math.round(opp.profitableTrade * (1 + opp.netProfitAtProfitable / 100))}</div>
                         </div>
                       </td>
