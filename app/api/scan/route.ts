@@ -159,9 +159,8 @@ function simulateSpreadDepth(
     return { breakevenTrade: 0, profitableTrade: 0, impactAtBreakeven: 0, impactAtProfitable: 0, netProfitAtProfitable: 0 };
   }
 
-  // For concentrated liquidity (Uniswap V3), effective liquidity is ~25-40% of TVL
-  // within the active tick range. Use 30% as conservative middle ground.
-  const effectiveLiquidity = poolTvlUsd * 0.30;
+  // Conservative: effective liquidity is ~15% of TVL (accounts for concentrated liq, idle capital)
+  const effectiveLiquidity = poolTvlUsd * 0.15;
 
   // Fee cost = buy fee + sell fee (both sides)
   const totalFeeCost = feePercent * 2; // e.g., 1% pool = 2% round-trip
@@ -181,12 +180,12 @@ function simulateSpreadDepth(
   const breakevenTrade = (spreadAfterFees / 100) * 2 * effectiveLiquidity;
   const impactAtBreakeven = spreadAfterFees; // At breakeven, impact = spreadAfterFees by definition
 
-  // PROFITABLE TRADE: keep at least 30% of the spread as profit
-  // impact = 70% of spreadAfterFees
-  const targetImpact = spreadAfterFees * 0.70; // 70% consumed by impact, 30% = profit
+  // PROFITABLE TRADE: keep at least 15% of the spread as profit (conservative)
+  // impact = 85% of spreadAfterFees
+  const targetImpact = spreadAfterFees * 0.85; // 85% consumed by impact, 15% = profit
   const profitableTrade = (targetImpact / 100) * 2 * effectiveLiquidity;
   const impactAtProfitable = targetImpact;
-  const netProfitAtProfitable = spreadPercent - totalFeeCost - targetImpact; // Should be ~30% of spreadAfterFees
+  const netProfitAtProfitable = spreadPercent - totalFeeCost - targetImpact; // ~15% of spreadAfterFees
 
   return {
     breakevenTrade: Math.max(0, Math.round(breakevenTrade * 100) / 100),
