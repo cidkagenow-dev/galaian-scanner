@@ -125,7 +125,14 @@ export async function GET() {
         const galaDexPriceUsd = symData.galaPrice;
         const cgPrice = cgPrices.get(symData.coinGeckoId) || symData.coinGeckoPrice || 0;
         if (!cgPrice) continue;
+        
+        // Skip if galaPrice is wildly different from CG price (data error)
+        const priceRatio = galaDexPriceUsd / cgPrice;
+        if (priceRatio > 100 || priceRatio < 0.01) continue;
 
+        
+        // Skip if no DEX pool data available
+        if (!bestDexPool) continue;
         // Find matching DEX pool
         const pairName1 = `${tokenA}/${tokenB}`;
         const pairName2 = `${tokenB}/${tokenA}`;
