@@ -143,6 +143,8 @@ export async function GET() {
       const pairName = `${tokenA}/${tokenB}`;
 
       // Get CoinGecko price
+      // Skip if no CoinGecko ID
+      if (!bridge.cgId) continue;
       const cgPrice = await fetchCGPrice(bridge.cgId);
       if (!cgPrice) continue;
 
