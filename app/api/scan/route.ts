@@ -91,41 +91,40 @@ export async function GET() {
 
     if (!rawPools || !arbTokens) throw new Error("Failed to fetch data");
 
-    // Build token price lookup: symbol -> { galaPrice, coinGeckoPrice, coinGeckoId }
+    // Build token price lookup: symbol -> { galaPrice, coinGeckoPrice, coinGeckoId, image }
     const tokenData = new Map<string, any>();
     for (const tok of arbTokens) {
       tokenData.set(tok.symbol, tok);
     }
 
-    // Get CoinGecko IDs for bridgeable tokens
+    // Build pool lookup: token symbol -> pools it appears in
+    const tokenPools = new Map<string, any[]>();
+    for (const pool of rawPools) {
+      const tA = pool.tokenInSymbol;
+      const tB = pool.tokenOutSymbol;
+      if (!tA || !tB) continue;
+      
+      if (!tokenPools.has(tA)) tokenPools.set(tA, []);
+      tokenPools.get(tA)!.push(pool);
+      
+      if (!tokenPools.has(tB)) tokenPools.set(tB, []);
+      tokenPools.get(tB)!.push(pool);
+    }
+
+    // Get CoinGecko prices for bridgeable tokens
     const cgIds = [...new Set(Object.values(BRIDGEABLE).map(b => b.cgId).filter(Boolean))];
     const cgPrices = await fetchCGPrices(cgIds);
 
     const opportunities: any[] = [];
+    const processedTokens = new Set<string>();
 
-    // Process each pool
-    for (const pool of rawPools) {
-      const tokenA = pool.tokenInSymbol;
-      const tokenB = pool.tokenOutSymbol;
-      if (!tokenA || !tokenB) continue;
+    // Process each bridgeable token
+    for (const [sym, bridge] of Object.entries(BRIDGEABLE)) {
+      if (processedTokens.has(sym)) continue;
+      processedTokens.add(sym);
 
-      // Find which token is bridgeable
-      const bridgeA = BRIDGEABLE[tokenA];
-      const bridgeB = BRIDGEABLE[tokenB];
-      if (!bridgeA && !bridgeB) continue;
-
-      // Determine arb direction
-      const token = bridgeA ? tokenA : tokenB;
-      const bridge = bridgeA ? bridgeA : bridgeB!;
-      const exitAsset = bridgeA ? tokenB : tokenA;
-      const exitBridgeable = BRIDGEABLE_BACK.has(exitAsset);
-      const exitBridgeInfo = BRIDGEABLE[exitAsset];
-
-      const poolId = pool.id?.toString() || `${tokenA}-${tokenB}`;
-      const pairName = `${tokenA}/${tokenB}`;
-
-      // Get GalaSwap price from arb.gala.com token data
-      const tokData = tokenData.get(token);
+      // Get GalaSwap price from arb.gala.com
+      const tokData = tokenData.get(sym);
       if (!tokData || !tokData.galaPrice || tokData.galaPrice === 0) continue;
 
       const galaDexPriceUsd = tokData.galaPrice;
@@ -138,20 +137,53 @@ export async function GET() {
       const spreadPct = ((galaDexPriceUsd - cgPrice) / cgPrice) * 100;
       if (Math.abs(spreadPct) < 0.5) continue;
 
+      // Find best pool for this token (prefer pools with stablecoins or GALA)
+      const pools = tokenPools.get(sym) || [];
+      let bestPool = null;
+      let bestExitAsset = "";
+      
+      for (const pool of pools) {
+        const exitA = pool.tokenInSymbol === sym ? pool.tokenOutSymbol : pool.tokenInSymbol;
+        const exitBridge = BRIDGEABLE[exitA];
+        
+        // Prefer stablecoins as exit asset
+        if (exitBridge?.isStablecoin) {
+          bestPool = pool;
+          bestExitAsset = exitA;
+          break;
+        }
+        // Then prefer GALA
+        if (exitA === "GALA") {
+          bestPool = pool;
+          bestExitAsset = exitA;
+        }
+        // Otherwise use first pool
+        if (!bestPool) {
+          bestPool = pool;
+          bestExitAsset = exitA;
+        }
+      }
+
+      if (!bestPool) continue;
+
+      const exitAsset = bestExitAsset;
+      const exitBridgeable = BRIDGEABLE_BACK.has(exitAsset);
+      const exitBridgeInfo = BRIDGEABLE[exitAsset];
+      const poolId = bestPool.id?.toString() || `${sym}-${exitAsset}`;
+      const pairName = `${sym}/${exitAsset}`;
+
       // Pool fee (default 1% for most GalaSwap pools)
       const poolFee = 1.0;
 
       // Net spread (buy external free, bridge free, sell on GalaSwap = fee)
       const netSpreadPct = spreadPct - poolFee;
 
-      // Trade sizing (simplified)
+      // Trade sizing
       const baseTrade = 1000;
       const breakevenTrade = spreadPct > poolFee 
         ? baseTrade * (spreadPct / poolFee) 
         : 0;
       const profitableTrade = breakevenTrade * 0.7;
-      const impactAtBreakeven = 0; // Will estimate with TVL later
-      const impactAtProfitable = 0;
       const netProfitAtProfitable = netSpreadPct;
 
       // Confidence
@@ -168,15 +200,15 @@ export async function GET() {
       if (!exitBridgeable) notes.push(`⚠️ ${exitAsset} not bridgeable back`);
 
       opportunities.push({
-        id: `${poolId}-${token}`,
+        id: `${poolId}-${sym}`,
         poolId,
-        tokenA,
-        tokenB,
+        tokenA: sym,
+        tokenB: exitAsset,
         pairName,
         poolFee: Math.round(poolFee * 100) / 100,
         poolTvl: 0,
-        poolVol1d: 0,
-        token,
+        poolVol1d: tokData.volume24h || 0,
+        token: sym,
         tokenImage: tokData.image || "",
         galaDexPrice: galaDexPriceUsd,
         galaDexPriceUsd: Math.round(galaDexPriceUsd * 1000000) / 1000000,
@@ -190,8 +222,8 @@ export async function GET() {
         exitAssetBridgeChain: exitBridgeInfo?.chain || "unknown",
         breakevenTrade: Math.round(breakevenTrade),
         profitableTrade: Math.round(profitableTrade),
-        impactAtBreakeven,
-        impactAtProfitable,
+        impactAtBreakeven: 0,
+        impactAtProfitable: 0,
         netProfitAtProfitable: Math.round(netProfitAtProfitable * 100) / 100,
         confidence,
         notes: notes.join(" | "),
