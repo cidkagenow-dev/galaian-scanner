@@ -4,7 +4,7 @@ const ARB_API = "https://arb.gala.com";
 const DEX_BACKEND = "https://dex-backend-prod1.defi.gala.com";
 const CG_API = "https://api.coingecko.com/api/v3";
 
-const IMBALANCE_THRESHOLD = 0.85;
+const IMBALANCE_THRESHOLD = 0.98; // Allow imbalanced pools, just flag them
 const MIN_SPREAD = 0.01; // Show even tiny spreads
 
 interface BridgeInfo {
