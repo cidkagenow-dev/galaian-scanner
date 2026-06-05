@@ -43,7 +43,7 @@ export interface Opportunity {
   sellPrice: number;
   buyOn: string;
   sellOn: string;
-  profitPer1k: number;
+  profitAtProfitable: number;
   confidence: "high" | "medium" | "low";
   bridgeInfo: string;
   cgId: string;
@@ -198,7 +198,7 @@ export async function scanForOpportunities(): Promise<ScanResult> {
       sellPrice: diff > 0 ? gala : cg,
       buyOn: diff > 0 ? `${bridge.chain} (external)` : "GalaSwap DEX",
       sellOn: diff > 0 ? "GalaSwap DEX" : `${bridge.chain} (external)`,
-      profitPer1k: round2(Math.max(0, (netSpread / 100) * 1000)),
+      profitAtProfitable: round2(Math.max(0, (netSpread / 100) * 1000)),
       confidence: conf,
       bridgeInfo: `${bridge.bridge} (${bridge.chain}↔GalaChain)`,
       cgId,
@@ -250,7 +250,7 @@ export async function scanForOpportunities(): Promise<ScanResult> {
         sellPrice: qSell.rate > 0 ? 1 / qSell.rate : 0,
         buyOn: `GALA→${target}`,
         sellOn: `${target}→GALA`,
-        profitPer1k: round2(Math.max(0, (rtPnl / 100) * 1000)),
+        profitAtProfitable: round2(Math.max(0, (rtPnl / 100) * 1000)),
         confidence: rtPnl > 0 ? "high" : "medium",
         bridgeInfo: `Round-trip: ${rtPnl >= 0 ? "+" : ""}${rtPnl.toFixed(2)}%`,
         cgId: "",
