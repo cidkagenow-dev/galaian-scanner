@@ -71,25 +71,45 @@ export interface ScanResult {
 
 // ─── Bridge Map ──────────────────────────────────────────────────────
 
-const BRIDGEABLE: Record<string, { chain: string; native: string; bridge: string }> = {
-  GBLUM: { chain: "ton", native: "BLUM", bridge: "GalaConnect" },
-  GTON: { chain: "ton", native: "TON", bridge: "GalaConnect" },
-  GALA: { chain: "ethereum", native: "GALA", bridge: "GalaConnect" },
-  GWETH: { chain: "ethereum", native: "ETH", bridge: "GalaConnect" },
-  GWBTC: { chain: "ethereum", native: "BTC", bridge: "GalaConnect" },
-  GUSDT: { chain: "ethereum", native: "USDT", bridge: "GalaConnect" },
-  GUSDC: { chain: "ethereum", native: "USDC", bridge: "GalaConnect" },
-  GSOL: { chain: "solana", native: "SOL", bridge: "GalaConnect" },
-  GTRUMP: { chain: "solana", native: "TRUMP", bridge: "GalaConnect" },
-  GMEW: { chain: "solana", native: "MEW", bridge: "GalaConnect" },
-  GUFD: { chain: "solana", native: "UFD", bridge: "GalaConnect" },
+const BRIDGEABLE: Record<string, { chain: string; native: string; bridge: string; cgId: string }> = {
+  // Ethereum bridge
+  GALA:    { chain: "ethereum", native: "GALA",    bridge: "GalaConnect", cgId: "gala" },
+  GWBTC:   { chain: "ethereum", native: "WBTC",   bridge: "GalaConnect", cgId: "bitcoin" },
+  GWETH:   { chain: "ethereum", native: "ETH",    bridge: "GalaConnect", cgId: "ethereum" },
+  GWBNB:   { chain: "ethereum", native: "BNB",    bridge: "GalaConnect", cgId: "binancecoin" },
+  GWXRP:   { chain: "ethereum", native: "XRP",    bridge: "GalaConnect", cgId: "ripple" },
+  GWTRX:   { chain: "ethereum", native: "TRX",    bridge: "GalaConnect", cgId: "tron" },
+  GUSDT:   { chain: "ethereum", native: "USDT",   bridge: "GalaConnect", cgId: "tether" },
+  GUSDC:   { chain: "ethereum", native: "USDC",   bridge: "GalaConnect", cgId: "usd-coin" },
+  GUNI:    { chain: "ethereum", native: "UNI",    bridge: "GalaConnect", cgId: "uniswap" },
+  GPEPE:   { chain: "ethereum", native: "PEPE",   bridge: "GalaConnect", cgId: "pepe" },
+  GFLOKI:  { chain: "ethereum", native: "FLOKI",  bridge: "GalaConnect", cgId: "floki" },
+  GAAVE:   { chain: "ethereum", native: "AAVE",   bridge: "GalaConnect", cgId: "aave" },
+  GARB:    { chain: "ethereum", native: "ARB",    bridge: "GalaConnect", cgId: "arbitrum" },
+  GCRV:    { chain: "ethereum", native: "CRV",    bridge: "GalaConnect", cgId: "curve-dao-token" },
+  GENA:    { chain: "ethereum", native: "ENA",    bridge: "GalaConnect", cgId: "ethena" },
+  GAPE:    { chain: "ethereum", native: "APE",    bridge: "GalaConnect", cgId: "apecoin" },
+  GDOGS:   { chain: "ethereum", native: "DOGS",   bridge: "GalaConnect", cgId: "dogs" },
+  // Solana bridge
+  GSOL:      { chain: "solana", native: "SOL",      bridge: "GalaConnect", cgId: "solana" },
+  GTRUMP:    { chain: "solana", native: "TRUMP",    bridge: "GalaConnect", cgId: "official-trump" },
+  GMEW:      { chain: "solana", native: "MEW",      bridge: "GalaConnect", cgId: "cat-in-a-dogs-world" },
+  GUFD:      { chain: "solana", native: "UFD",      bridge: "GalaConnect", cgId: "unicorn-fart-dust" },
+  GFIGHT:    { chain: "solana", native: "FIGHT",    bridge: "GalaConnect", cgId: "fight-2" },
+  GPONKE:    { chain: "solana", native: "PONKE",    bridge: "GalaConnect", cgId: "ponke" },
+  GSHRAP:    { chain: "solana", native: "SHRAP",    bridge: "GalaConnect", cgId: "shrapnel-2" },
+  GBIGTIME:  { chain: "solana", native: "BIGTIME",  bridge: "GalaConnect", cgId: "big-time" },
+  GPENGU:    { chain: "solana", native: "PENGU",    bridge: "GalaConnect", cgId: "pudgy-penguins" },
+  GFARTCOIN: { chain: "solana", native: "FARTCOIN", bridge: "GalaConnect", cgId: "fartcoin" },
+  // TON bridge
+  GTON:  { chain: "ton", native: "TON",  bridge: "GalaConnect", cgId: "the-open-network" },
+  GBLUM: { chain: "ton", native: "BLUM", bridge: "GalaConnect", cgId: "blum" },
 };
 
 const SKIP_TOKENS = new Set([
-  "GWXRP", "GWTRX", // No bridge
   "GSUSDT", "GSUSDC", // Internal stablecoin variants
   "TestToken1", "TestToken3", "Token", // Test tokens
-  "GFIGHT", "GSWAP", "ETIME", "SILK", "GFINANCE", // No CG price
+  "GSWAP", "ETIME", "SILK", "GFINANCE", // No CG price
 ]);
 
 const STABLECOINS = new Set(["GUSDT", "GUSDC"]);
