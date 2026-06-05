@@ -73,6 +73,7 @@ export default function Home() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(30);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [hideZeroTvl, setHideZeroTvl] = useState(true);
 
   const fetchData = useCallback(async () => {
     try {
@@ -101,6 +102,7 @@ export default function Home() {
 
   let opps = data?.opportunities ?? [];
   if (search) { const q = search.toLowerCase(); opps = opps.filter(o => o.token.toLowerCase().includes(q) || o.pairName.toLowerCase().includes(q)); }
+  if (hideZeroTvl) { opps = opps.filter(o => o.poolTvl > 0); }
   opps = [...opps].sort((a, b) => {
     const va = (a as any)[sortKey] ?? 0;
     const vb = (b as any)[sortKey] ?? 0;
@@ -140,6 +142,7 @@ export default function Home() {
 
       <div className="filter-bar">
         <input className="search-input" placeholder="🔍 Search token or pair..." value={search} onChange={e => setSearch(e.target.value)} />
+        <button className={`refresh-btn ${hideZeroTvl ? "active" : ""}`} onClick={() => setHideZeroTvl(!hideZeroTvl)}>{hideZeroTvl ? "👁️ Hide" : "👁️ Show"} 0 TVL</button>
         <div className="legend">
           <span className="legend-item"><span className="dot green" />Breakeven = max trade where profit=$0</span>
           <span className="legend-item"><span className="dot yellow" />Profitable = trade keeping 30% of spread</span>

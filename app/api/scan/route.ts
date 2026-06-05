@@ -131,14 +131,15 @@ export async function GET() {
         if (priceRatio > 100 || priceRatio < 0.01) continue;
 
         
-        // Skip if no DEX pool data available
-        if (!bestDexPool) continue;
         // Find matching DEX pool
         const pairName1 = `${tokenA}/${tokenB}`;
         const pairName2 = `${tokenB}/${tokenA}`;
         const bestDexPool = dexPoolData.get(pairName1) || dexPoolData.get(pairName2);
 
         // Pool data
+        
+        // Skip if no DEX pool data available
+        if (!bestDexPool) continue;
         const poolTvl = bestDexPool?.tvl || 0;
         const poolVol1d = bestDexPool?.volume1d || 0;
         const poolFee = bestDexPool?.fee ? parseFloat(bestDexPool.fee) : 1.0;
