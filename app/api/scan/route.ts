@@ -47,6 +47,9 @@ const BRIDGEABLE: Record<string, BridgeInfo> = {
 
 const BRIDGEABLE_BACK = new Set(Object.keys(BRIDGEABLE));
 
+// Blacklisted tokens (false positives, dead tokens, etc.)
+const SKIP = new Set(["MOON", "TestToken1", "TestToken3", "Token", "GSWAP", "SILK", "ETIME", "GFINANCE", "GISD", "RBIT"]);
+
 // Extra CG ID mapping for tokens not in arb API
 const EXTRA_CG_IDS: Record<string, string> = {
   GSUSDT: "tether",
@@ -194,6 +197,8 @@ export async function GET() {
     for (const pool of dexPools) {
       const t0 = pool.token0;
       const t1 = pool.token1;
+      // Skip blacklisted tokens
+      if (SKIP.has(t0) || SKIP.has(t1)) continue;
       const poolTvl = pool.tvl || 0;
       const poolVol1d = pool.volume1d || 0;
       const poolFee = pool.fee ? parseFloat(pool.fee) : 1.0;
