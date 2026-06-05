@@ -179,7 +179,7 @@ export default function Home() {
                           </div>
                         </div>
                       </td>
-                      <td><span className="spread-cell positive">+{opp.spreadPct.toFixed(1)}%</span><div className="sub">net {opp.netSpreadPct >= 0 ? "+" : ""}{opp.netSpreadPct.toFixed(2)}%</div></td>
+                      <td><span className={`spread-cell ${opp.spreadPct >= 0 ? "positive" : "negative"}`}>{opp.spreadPct >= 0 ? "+" : ""}{opp.spreadPct.toFixed(1)}%</span><div className="sub">net {opp.netSpreadPct >= 0 ? "+" : ""}{opp.netSpreadPct.toFixed(2)}%</div></td>
                       <td><span className="fee-cell">{opp.poolFee}%</span></td>
                       <td><span className={`tvl-cell ${opp.poolTvl > 10000 ? "green" : opp.poolTvl > 1000 ? "yellow" : "red"}`}>{fmtVol(opp.poolTvl)}</span><div className="sub">vol {fmtVol(opp.poolVol1d)}</div></td>
                       <td>

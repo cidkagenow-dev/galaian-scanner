@@ -211,16 +211,44 @@ export async function GET() {
       // Net spread (buy external free, bridge free, sell on GalaSwap = fee)
       const netSpreadPct = spreadPct - poolFee;
 
-      // Trade sizing based on TVL
-      const effectiveLiq = poolTvl * 0.15; // 15% of TVL (conservative CLMM estimate)
-      const breakevenTrade = spreadPct > poolFee && effectiveLiq > 0
-        ? (spreadPct - poolFee) / 100 * 2 * effectiveLiq
+
+      // Direction-aware depth: use correct side liquidity
+      // token0 = first token in DEX pool, token1 = second token
+      const dexToken0 = bestDexPool?.token0;
+      const isToken0 = dexToken0 === sym;
+      
+      // If selling bridgeable token (spread > 0): use bridgeable token side
+      // If buying bridgeable token (spread < 0): use exit asset side
+      const sellSideTvl = isToken0 
+        ? (bestDexPool?.token0TvlUsd || 0)
+        : (bestDexPool?.token1TvlUsd || 0);
+      const buySideTvl = isToken0
+        ? (bestDexPool?.token1TvlUsd || 0)
+        : (bestDexPool?.token0TvlUsd || 0);
+      
+      // For CLMM pools, effective liquidity is ~15% of side TVL
+      const effectiveLiq = spreadPct > 0 
+        ? sellSideTvl * 0.15   // Selling into pool: use sell side
+        : buySideTvl * 0.15;   // Buying from pool: use buy side
+      
+      const breakevenTrade = Math.abs(spreadPct) > poolFee && effectiveLiq > 0
+        ? (Math.abs(spreadPct) - poolFee) / 100 * 2 * effectiveLiq
         : 0;
       const profitableTrade = breakevenTrade * 0.7;
       
       // Impact at trade sizes
       const impactAtBreakeven = breakevenTrade > 0 ? (breakevenTrade / (2 * effectiveLiq)) * 100 : 0;
       const impactAtProfitable = profitableTrade > 0 ? (profitableTrade / (2 * effectiveLiq)) * 100 : 0;
+      const netProfitAtProfitable = Math.abs(spreadPct) - poolFee - impactAtProfitable;
+
+
+
+
+
+
+
+
+
       const netProfitAtProfitable = spreadPct - poolFee - impactAtProfitable;
 
       // Confidence
