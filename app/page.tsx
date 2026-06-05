@@ -32,6 +32,16 @@ interface PoolOpportunity {
   notes: string;
   bridgeInfo: string;
   bridgeFee: number;
+  poolToken0?: string;
+  poolToken1?: string;
+  token0TvlUsd?: number;
+  token1TvlUsd?: number;
+  token0Tvl?: number;
+  token1Tvl?: number;
+  token0Pct?: number;
+  token1Pct?: number;
+  poolHash?: string;
+  poolPair?: string;
 }
 
 interface ScanResult {
@@ -242,6 +252,41 @@ export default function Home() {
                                 <span>Total spread: {opp.spreadPct.toFixed(1)}%</span>
                                 <span>Breakeven: {fmtVol(opp.breakevenTrade)}</span>
                                 <span>Safe trade: {fmtVol(opp.profitableTrade)}</span>
+                              </div>
+                            </div>
+                            <div className="detail-group" style={{gridColumn:"1/-1"}}>
+                              <label>🏊 Pool Balance</label>
+                              <div className="pool-balance-detail">
+                                <div className="pool-token-row">
+                                  <div className="pool-token-info">
+                                    <span className="pool-token-name">{opp.poolToken0 || opp.tokenA}</span>
+                                    <span className="pool-token-pct" style={{color: (opp.token0Pct || 0) > 80 ? "var(--yellow)" : "var(--green)"}}>{opp.token0Pct || 0}%</span>
+                                  </div>
+                                  <div className="pool-token-bar-wrap">
+                                    <div className="pool-token-bar" style={{width:`${opp.token0Pct || 0}%`, background: (opp.token0Pct || 0) > 80 ? "var(--yellow)" : "var(--cyan)"}} />
+                                  </div>
+                                  <div className="pool-token-values">
+                                    <span className="pool-usd">${fmtVol(opp.token0TvlUsd || 0)}</span>
+                                    <span className="pool-raw">{opp.token0Tvl ? Number(opp.token0Tvl).toLocaleString("en-US", {maximumFractionDigits: 2}) : "—"}</span>
+                                  </div>
+                                </div>
+                                <div className="pool-token-row">
+                                  <div className="pool-token-info">
+                                    <span className="pool-token-name">{opp.poolToken1 || opp.tokenB}</span>
+                                    <span className="pool-token-pct" style={{color: (opp.token1Pct || 0) > 80 ? "var(--yellow)" : "var(--green)"}}>{opp.token1Pct || 0}%</span>
+                                  </div>
+                                  <div className="pool-token-bar-wrap">
+                                    <div className="pool-token-bar" style={{width:`${opp.token1Pct || 0}%`, background: (opp.token1Pct || 0) > 80 ? "var(--yellow)" : "var(--cyan)"}} />
+                                  </div>
+                                  <div className="pool-token-values">
+                                    <span className="pool-usd">${fmtVol(opp.token1TvlUsd || 0)}</span>
+                                    <span className="pool-raw">{opp.token1Tvl ? Number(opp.token1Tvl).toLocaleString("en-US", {maximumFractionDigits: 2}) : "—"}</span>
+                                  </div>
+                                </div>
+                                <div className="pool-total-row">
+                                  <span>Total TVL: <strong>${fmtVol(opp.poolTvl)}</strong></span>
+                                  <span>24h Vol: <strong>${fmtVol(opp.poolVol1d)}</strong></span>
+                                </div>
                               </div>
                             </div>
                             {opp.notes && <div className="detail-group" style={{gridColumn:"1/-1"}}><label>⚠️ Notes</label><div className="val" style={{color:"var(--yellow)"}}>{opp.notes}</div></div>}

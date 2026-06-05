@@ -661,3 +661,84 @@ td {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.85rem;
 }
+
+/* Pool Balance Detail */
+.pool-balance-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.pool-token-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.pool-token-info {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 90px;
+}
+
+.pool-token-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.pool-token-pct {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.pool-token-bar-wrap {
+  flex: 1;
+  height: 8px;
+  background: var(--bg-card);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.pool-token-bar {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+
+.pool-token-values {
+  display: flex;
+  gap: 0.5rem;
+  min-width: 160px;
+  justify-content: flex-end;
+}
+
+.pool-usd {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pool-raw {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
+.pool-total-row {
+  display: flex;
+  gap: 1.5rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.pool-total-row strong {
+  color: var(--text);
+}
