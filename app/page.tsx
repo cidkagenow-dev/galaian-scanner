@@ -2,30 +2,36 @@
 
 import { useState, useEffect, useCallback } from "react";
 
-interface Opportunity {
+interface PoolOpportunity {
   id: string;
-  category: string;
-  token: string;
-  spreadPct: number;
-  netSpreadPct: number;
-  buyPrice: number;
-  sellPrice: number;
-  buyOn: string;
-  sellOn: string;
-  profitAtProfitable: number;
-  confidence: string;
-  bridgeInfo: string;
+  poolId: string;
+  tokenA: string;
+  tokenB: string;
+  pairName: string;
+  poolFee: number;
   poolTvl: number;
   poolVol1d: number;
-  poolFee: number;
+  token: string;
+  tokenImage: string;
+  galaDexPrice: number;
+  galaDexPriceUsd: number;
+  cgPrice: number;
+  spreadPct: number;
+  netSpreadPct: number;
+  buyOn: string;
+  sellOn: string;
+  exitAsset: string;
+  exitAssetBridgeable: boolean;
+  exitAssetBridgeChain: string;
   breakevenTrade: number;
   profitableTrade: number;
   impactAtBreakeven: number;
   impactAtProfitable: number;
   netProfitAtProfitable: number;
-  galaDexPrice: number;
-  cgPrice: number;
+  confidence: string;
   notes: string;
+  bridgeInfo: string;
+  bridgeFee: number;
 }
 
 interface ScanResult {
@@ -33,11 +39,11 @@ interface ScanResult {
   elapsed: number;
   poolCount: number;
   tokenCount: number;
-  opportunities: Opportunity[];
+  opportunities: PoolOpportunity[];
   stats: { total: number; highConf: number; medConf: number; bestSpread: number; bestNet: number };
 }
 
-type SortKey = "spreadPct" | "netSpreadPct" | "profitAtProfitable" | "poolTvl" | "breakevenTrade" | "profitableTrade" | "token";
+type SortKey = "spreadPct" | "netSpreadPct" | "poolTvl" | "breakevenTrade" | "profitableTrade" | "token" | "pairName";
 type SortDir = "asc" | "desc";
 
 const fmtVol = (v: number) => {
@@ -61,7 +67,7 @@ export default function Home() {
   const [data, setData] = useState<ScanResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<SortKey>("profitableTrade");
+  const [sortKey, setSortKey] = useState<SortKey>("netSpreadPct");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -94,7 +100,7 @@ export default function Home() {
   };
 
   let opps = data?.opportunities ?? [];
-  if (search) { const q = search.toLowerCase(); opps = opps.filter(o => o.token.toLowerCase().includes(q)); }
+  if (search) { const q = search.toLowerCase(); opps = opps.filter(o => o.token.toLowerCase().includes(q) || o.pairName.toLowerCase().includes(q)); }
   opps = [...opps].sort((a, b) => {
     const va = (a as any)[sortKey] ?? 0;
     const vb = (b as any)[sortKey] ?? 0;
@@ -111,8 +117,8 @@ export default function Home() {
         <div className="header-inner">
           <div className="logo">
             <h1>GalaSwap Arb Scanner</h1>
-            <span className="badge">v3.0</span>
-            <span className="badge badge-new">Depth Sim</span>
+            <span className="badge">v4.0</span>
+            <span className="badge badge-new">Pool-Level</span>
           </div>
           <div className="header-right">
             {data && <div className="last-updated"><div className={`status-dot ${loading ? "loading" : error ? "error" : ""}`} /><span>{fmtTime(data.timestamp)}</span>{autoRefresh && <span className="countdown">({countdown}s)</span>}</div>}
@@ -133,10 +139,10 @@ export default function Home() {
       )}
 
       <div className="filter-bar">
-        <input className="search-input" placeholder="🔍 Search token..." value={search} onChange={e => setSearch(e.target.value)} />
+        <input className="search-input" placeholder="🔍 Search token or pair..." value={search} onChange={e => setSearch(e.target.value)} />
         <div className="legend">
-          <span className="legend-item"><span className="dot green" />Breakeven = max trade size ($0 profit)</span>
-          <span className="legend-item"><span className="dot yellow" />Profitable = trade size keeping 30% of spread</span>
+          <span className="legend-item"><span className="dot green" />Breakeven = max trade where profit=$0</span>
+          <span className="legend-item"><span className="dot yellow" />Profitable = trade keeping 30% of spread</span>
         </div>
       </div>
 
@@ -148,13 +154,14 @@ export default function Home() {
         <div className="table-wrap">
           <table>
             <thead><tr>
-              <th onClick={() => handleSort("token")}>Token <SA col="token" /></th>
+              <th onClick={() => handleSort("pairName")}>Pair <SA col="pairName" /></th>
               <th onClick={() => handleSort("spreadPct")}>Spread <SA col="spreadPct" /></th>
               <th>Pool Fee</th>
               <th onClick={() => handleSort("poolTvl")}>Pool TVL <SA col="poolTvl" /></th>
-              <th className="col-highlight" onClick={() => handleSort("breakevenTrade")}>🔴 Breakeven (Max) <SA col="breakevenTrade" /></th>
-              <th className="col-highlight" onClick={() => handleSort("profitableTrade")}>🟢 Profitable (Safe) <SA col="profitableTrade" /></th>
-              <th onClick={() => handleSort("profitAtProfitable")}>Profit <SA col="profitAtProfitable" /></th>
+              <th>Exit Asset</th>
+              <th className="col-highlight" onClick={() => handleSort("breakevenTrade")}>🔴 Breakeven <SA col="breakevenTrade" /></th>
+              <th className="col-highlight" onClick={() => handleSort("profitableTrade")}>🟢 Profitable <SA col="profitableTrade" /></th>
+              <th>Profit</th>
               <th>Conf</th>
             </tr></thead>
             <tbody>
@@ -167,14 +174,20 @@ export default function Home() {
                         <div className="token-cell">
                           <div className="token-icon">{opp.token[0]}</div>
                           <div>
-                            <div className="symbol">{opp.token}</div>
+                            <div className="symbol">{opp.pairName}</div>
                             <div className="cg-id">{opp.bridgeInfo.split("(")[0]}</div>
                           </div>
                         </div>
                       </td>
                       <td><span className="spread-cell positive">+{opp.spreadPct.toFixed(1)}%</span><div className="sub">net {opp.netSpreadPct >= 0 ? "+" : ""}{opp.netSpreadPct.toFixed(2)}%</div></td>
-                      <td><span className="fee-cell">{opp.poolFee}% × 2</span></td>
+                      <td><span className="fee-cell">{opp.poolFee}%</span></td>
                       <td><span className={`tvl-cell ${opp.poolTvl > 10000 ? "green" : opp.poolTvl > 1000 ? "yellow" : "red"}`}>{fmtVol(opp.poolTvl)}</span><div className="sub">vol {fmtVol(opp.poolVol1d)}</div></td>
+                      <td>
+                        <div className="exit-asset">
+                          <span className={`badge ${opp.exitAssetBridgeable ? "green" : "yellow"}`}>{opp.exitAsset}</span>
+                          {!opp.exitAssetBridgeable && <div className="sub" style={{color:"var(--yellow)"}}>⚠️ Not bridgeable</div>}
+                        </div>
+                      </td>
                       <td className="col-highlight">
                         <div className="trade-cell">
                           <span className="breakeven-val">{fmtVol(opp.breakevenTrade)}</span>
@@ -197,32 +210,34 @@ export default function Home() {
                     </tr>
                     {isExp && (
                       <tr className="expanded-row" key={`${opp.id}-exp`}>
-                        <td colSpan={8}>
+                        <td colSpan={9}>
                           <div className="expanded-content">
-                            <div className="detail-group"><label>GalaSwap Price</label><div className="val">{fmtPrice(opp.galaDexPrice)}</div></div>
+                            <div className="detail-group"><label>Pair</label><div className="val">{opp.pairName}</div></div>
+                            <div className="detail-group"><label>GalaSwap Price</label><div className="val">{fmtPrice(opp.galaDexPriceUsd)}</div></div>
                             <div className="detail-group"><label>CoinGecko Price</label><div className="val">{fmtPrice(opp.cgPrice)}</div></div>
                             <div className="detail-group"><label>Spread</label><div className="val" style={{color:"var(--green)"}}>{opp.spreadPct.toFixed(2)}%</div></div>
-                            <div className="detail-group"><label>Fees (round-trip)</label><div className="val">{(opp.poolFee * 2).toFixed(2)}%</div></div>
+                            <div className="detail-group"><label>Pool Fee</label><div className="val">{opp.poolFee}%</div></div>
                             <div className="detail-group"><label>🟢 Buy On</label><div className="val">{opp.buyOn}</div></div>
                             <div className="detail-group"><label>🔴 Sell On</label><div className="val">{opp.sellOn}</div></div>
+                            <div className="detail-group"><label>Exit Asset</label><div className="val" style={{color: opp.exitAssetBridgeable ? "var(--green)" : "var(--yellow)"}}>{opp.exitAsset} {opp.exitAssetBridgeable ? "✅ Bridgeable" : "⚠️ Not bridgeable"}</div></div>
                             <div className="detail-group"><label>Bridge</label><div className="val" style={{color:"var(--cyan)"}}>{opp.bridgeInfo}</div></div>
-                            <div className="detail-group"><label>Profit @ Optimal</label><div className="val" style={{color:opp.profitAtProfitable>0?"var(--green)":"var(--red)"}}>{opp.profitAtProfitable>0?`$${opp.profitAtProfitable}`:"—"}</div></div>
+                            <div className="detail-group"><label>Profit @ Safe</label><div className="val" style={{color:opp.netProfitAtProfitable>0?"var(--green)":"var(--red)"}}>{opp.netProfitAtProfitable>0?`$${opp.netProfitAtProfitable}`:"—"}</div></div>
                             <div className="detail-group" style={{gridColumn:"1/-1"}}>
-                              <label>📐 Spread Depth Breakdown</label>
+                              <label>📐 Spread Breakdown</label>
                               <div className="depth-bar">
-                                <div className="depth-fees" style={{width:`${Math.min(100, (opp.poolFee*2/opp.spreadPct)*100)}%`}}>
-                                  Fees {(opp.poolFee*2).toFixed(1)}%
+                                <div className="depth-fees" style={{width:`${Math.min(100, (opp.poolFee/opp.spreadPct)*100)}%`}}>
+                                  Fee {opp.poolFee}%
                                 </div>
                                 <div className="depth-impact" style={{width:`${Math.min(100, (opp.impactAtProfitable/opp.spreadPct)*100)}%`}}>
                                   Impact {opp.impactAtProfitable.toFixed(1)}%
                                 </div>
-                                <div className="depth-profit" style={{width:`${Math.min(100, (opp.netProfitAtProfitable/opp.spreadPct)*100)}%`}}>
+                                <div className="depth-profit" style={{width:`${Math.min(100, Math.max(0, opp.netProfitAtProfitable/opp.spreadPct)*100)}%`}}>
                                   Profit {opp.netProfitAtProfitable.toFixed(1)}%
                                 </div>
                               </div>
                               <div className="depth-labels">
                                 <span>Total spread: {opp.spreadPct.toFixed(1)}%</span>
-                                <span>Breakeven trade: {fmtVol(opp.breakevenTrade)}</span>
+                                <span>Breakeven: {fmtVol(opp.breakevenTrade)}</span>
                                 <span>Safe trade: {fmtVol(opp.profitableTrade)}</span>
                               </div>
                             </div>
@@ -242,9 +257,9 @@ export default function Home() {
       {data && opps.length === 0 && !loading && <div className="empty-state"><div className="icon">✅</div><h3>No Opportunities</h3><p>All spreads consumed by fees + impact.</p></div>}
 
       <footer className="footer">
-        <p><strong>GalaSwap Arb Scanner v3.0</strong> — Real on-chain prices + Pool TVL + Spread depth simulation</p>
+        <p><strong>GalaSwap Arb Scanner v4.0</strong> — Pool-level spread + Exit asset + Bridge status</p>
         <p style={{marginTop:"0.5rem"}}>Data: <a href="https://dex-backend-prod1.defi.gala.com" target="_blank">GalaSwap DEX</a> + <a href="https://www.coingecko.com" target="_blank">CoinGecko</a> | Auto-refresh 30s</p>
-        <p style={{marginTop:"0.5rem",color:"var(--text-muted)"}}>📐 Breakeven = max trade where profit=$0. Profitable = trade keeping 30% of spread. Based on 30% effective liquidity (conservative CLMM estimate).</p>
+        <p style={{marginTop:"0.5rem",color:"var(--text-muted)"}}>📐 Breakeven = max trade where profit=$0. Profitable = trade keeping 30% of spread. Bridge fee = $0 (GalaConnect free).</p>
       </footer>
     </div>
   );
