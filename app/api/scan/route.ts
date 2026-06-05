@@ -249,7 +249,6 @@ export async function GET() {
 
 
 
-      const netProfitAtProfitable = spreadPct - poolFee - impactAtProfitable;
 
       // Confidence
       let confidence: "high" | "medium" | "low" = "low";
