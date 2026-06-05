@@ -12,7 +12,7 @@ interface Opportunity {
   sellPrice: number;
   buyOn: string;
   sellOn: string;
-  profitPer1k: number;
+  profitAtProfitable: number;
   confidence: string;
   bridgeInfo: string;
   poolTvl: number;
@@ -37,7 +37,7 @@ interface ScanResult {
   stats: { total: number; highConf: number; medConf: number; bestSpread: number; bestNet: number };
 }
 
-type SortKey = "spreadPct" | "netSpreadPct" | "profitPer1k" | "poolTvl" | "breakevenTrade" | "profitableTrade" | "token";
+type SortKey = "spreadPct" | "netSpreadPct" | "profitAtProfitable" | "poolTvl" | "breakevenTrade" | "profitableTrade" | "token";
 type SortDir = "asc" | "desc";
 
 const fmtVol = (v: number) => {
@@ -154,7 +154,7 @@ export default function Home() {
               <th onClick={() => handleSort("poolTvl")}>Pool TVL <SA col="poolTvl" /></th>
               <th className="col-highlight" onClick={() => handleSort("breakevenTrade")}>🔴 Breakeven (Max) <SA col="breakevenTrade" /></th>
               <th className="col-highlight" onClick={() => handleSort("profitableTrade")}>🟢 Profitable (Safe) <SA col="profitableTrade" /></th>
-              <th onClick={() => handleSort("profitPer1k")}>Profit/Trade <SA col="profitPer1k" /></th>
+              <th onClick={() => handleSort("profitAtProfitable")}>Profit <SA col="profitAtProfitable" /></th>
               <th>Conf</th>
             </tr></thead>
             <tbody>
@@ -206,7 +206,7 @@ export default function Home() {
                             <div className="detail-group"><label>🟢 Buy On</label><div className="val">{opp.buyOn}</div></div>
                             <div className="detail-group"><label>🔴 Sell On</label><div className="val">{opp.sellOn}</div></div>
                             <div className="detail-group"><label>Bridge</label><div className="val" style={{color:"var(--cyan)"}}>{opp.bridgeInfo}</div></div>
-                            <div className="detail-group"><label>$1K Trade Profit</label><div className="val" style={{color:opp.profitPer1k>0?"var(--green)":"var(--red)"}}>{opp.profitPer1k>0?`+$${opp.profitPer1k}`:"—"}</div></div>
+                            <div className="detail-group"><label>Profit @ Optimal</label><div className="val" style={{color:opp.profitAtProfitable>0?"var(--green)":"var(--red)"}}>{opp.profitAtProfitable>0?`$${opp.profitAtProfitable}`:"—"}</div></div>
                             <div className="detail-group" style={{gridColumn:"1/-1"}}>
                               <label>📐 Spread Depth Breakdown</label>
                               <div className="depth-bar">

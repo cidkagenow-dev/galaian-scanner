@@ -57,7 +57,7 @@ interface Opportunity {
   sellPrice: number;
   buyOn: string;
   sellOn: string;
-  profitPer1k: number;
+  profitAtProfitable: number;
   confidence: string;
   bridgeInfo: string;
   poolTvl: number;
@@ -292,7 +292,7 @@ export async function GET() {
         sellPrice: diff > 0 ? dexPrice : cgPrice,
         buyOn,
         sellOn,
-        profitPer1k: Math.round(Math.max(0, (depth.netProfitAtProfitable / 100) * 1000) * 100) / 100,
+        profitAtProfitable: Math.round(Math.max(0, depth.profitableTrade * (depth.netProfitAtProfitable / 100)) * 100) / 100,
         confidence: conf,
         bridgeInfo: `${bridge.bridge} (${bridge.chain}↔GalaChain)`,
         poolTvl: Math.round(poolTvl * 100) / 100,
