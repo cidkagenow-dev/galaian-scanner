@@ -313,8 +313,8 @@ export async function GET() {
     // Deduplicate (normalized pair name + token)
     const seen = new Map<string, any>();
     for (const opp of opportunities) {
-      const [pa, pb] = opp.pairName.split("/").sort();
-      const key = `${pa}/${pb}-${opp.token}`;
+      // Include fee tier in key so 0.3% and 1% pools are separate
+      const key = `${opp.pairName}-${opp.poolFee}-${opp.token}`;
       const existing = seen.get(key);
       if (!existing || Math.abs(opp.spreadPct) > Math.abs(existing.spreadPct)) {
         seen.set(key, opp);
