@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 // ─── Config ───────────────────────────────────────────────────────────
 const ARB_API = "https://arb.gala.com";
+const DEX_BACKEND = "https://dex-backend-prod1.defi.gala.com";
 const CG_API = "https://api.coingecko.com/api/v3";
 
 // ─── Bridge Map ──────────────────────────────────────────────────────
@@ -74,6 +75,19 @@ async function fetchCGPrices(ids: string[]): Promise<Map<string, number>> {
   return prices;
 }
 
+// Fetch all pools from DEX backend (has TVL, volume)
+async function fetchAllPools(): Promise<any[]> {
+  const pools: any[] = [];
+  for (let page = 1; page <= 20; page++) {
+    const url = `${DEX_BACKEND}/explore/pools?limit=20&page=${page}`;
+    const data = await fetchJSON<any>(url);
+    if (!data?.data?.pools?.length) break;
+    pools.push(...data.data.pools);
+    if (pools.length >= (data.data.count || 0)) break;
+  }
+  return pools;
+}
+
 // ─── Main scanner ────────────────────────────────────────────────────
 
 export const revalidate = 30;
@@ -83,18 +97,26 @@ export async function GET() {
   try {
     const startTime = Date.now();
 
-    // Fetch pools and tokens from arb.gala.com
-    const [rawPools, arbTokens] = await Promise.all([
+    // Fetch from both sources in parallel
+    const [rawPools, arbTokens, dexPools] = await Promise.all([
       fetchJSON<any[]>(`${ARB_API}/api/pools`),
       fetchJSON<any[]>(`${ARB_API}/api/tokens`),
+      fetchAllPools(),
     ]);
 
     if (!rawPools || !arbTokens) throw new Error("Failed to fetch data");
 
-    // Build token price lookup: symbol -> { galaPrice, coinGeckoPrice, coinGeckoId, image }
+    // Build token price lookup: symbol -> { galaPrice, coinGeckoPrice, coinGeckoId, image, volume24h }
     const tokenData = new Map<string, any>();
     for (const tok of arbTokens) {
       tokenData.set(tok.symbol, tok);
+    }
+
+    // Build DEX pool lookup: "token0/token1" -> { tvl, volume1d, fee }
+    const dexPoolData = new Map<string, any>();
+    for (const pool of dexPools) {
+      const key = pool.poolName || `${pool.token0}/${pool.token1}`;
+      dexPoolData.set(key, pool);
     }
 
     // Build pool lookup: token symbol -> pools it appears in
@@ -137,30 +159,39 @@ export async function GET() {
       const spreadPct = ((galaDexPriceUsd - cgPrice) / cgPrice) * 100;
       if (Math.abs(spreadPct) < 0.5) continue;
 
-      // Find best pool for this token (prefer pools with stablecoins or GALA)
+      // Find best pool for this token
       const pools = tokenPools.get(sym) || [];
       let bestPool = null;
       let bestExitAsset = "";
+      let bestDexPool = null;
       
       for (const pool of pools) {
         const exitA = pool.tokenInSymbol === sym ? pool.tokenOutSymbol : pool.tokenInSymbol;
         const exitBridge = BRIDGEABLE[exitA];
         
+        // Try to find matching DEX pool for TVL/volume
+        const pairName1 = `${sym}/${exitA}`;
+        const pairName2 = `${exitA}/${sym}`;
+        const dexPool = dexPoolData.get(pairName1) || dexPoolData.get(pairName2);
+        
         // Prefer stablecoins as exit asset
         if (exitBridge?.isStablecoin) {
           bestPool = pool;
           bestExitAsset = exitA;
+          bestDexPool = dexPool;
           break;
         }
         // Then prefer GALA
         if (exitA === "GALA") {
           bestPool = pool;
           bestExitAsset = exitA;
+          bestDexPool = dexPool;
         }
         // Otherwise use first pool
         if (!bestPool) {
           bestPool = pool;
           bestExitAsset = exitA;
+          bestDexPool = dexPool;
         }
       }
 
@@ -172,24 +203,30 @@ export async function GET() {
       const poolId = bestPool.id?.toString() || `${sym}-${exitAsset}`;
       const pairName = `${sym}/${exitAsset}`;
 
-      // Pool fee (default 1% for most GalaSwap pools)
-      const poolFee = 1.0;
+      // Pool data from DEX backend
+      const poolTvl = bestDexPool?.tvl || 0;
+      const poolVol1d = bestDexPool?.volume1d || 0;
+      const poolFee = bestDexPool?.fee ? parseFloat(bestDexPool.fee) : 1.0;
 
       // Net spread (buy external free, bridge free, sell on GalaSwap = fee)
       const netSpreadPct = spreadPct - poolFee;
 
-      // Trade sizing
-      const baseTrade = 1000;
-      const breakevenTrade = spreadPct > poolFee 
-        ? baseTrade * (spreadPct / poolFee) 
+      // Trade sizing based on TVL
+      const effectiveLiq = poolTvl * 0.15; // 15% of TVL (conservative CLMM estimate)
+      const breakevenTrade = spreadPct > poolFee && effectiveLiq > 0
+        ? (spreadPct - poolFee) / 100 * 2 * effectiveLiq
         : 0;
       const profitableTrade = breakevenTrade * 0.7;
-      const netProfitAtProfitable = netSpreadPct;
+      
+      // Impact at trade sizes
+      const impactAtBreakeven = breakevenTrade > 0 ? (breakevenTrade / (2 * effectiveLiq)) * 100 : 0;
+      const impactAtProfitable = profitableTrade > 0 ? (profitableTrade / (2 * effectiveLiq)) * 100 : 0;
+      const netProfitAtProfitable = spreadPct - poolFee - impactAtProfitable;
 
       // Confidence
       let confidence: "high" | "medium" | "low" = "low";
-      if (spreadPct > 5 && netSpreadPct > 2) confidence = "high";
-      else if (spreadPct > 3 && netSpreadPct > 1) confidence = "medium";
+      if (poolTvl > 10000 && poolVol1d > 1000 && spreadPct > 3 && netProfitAtProfitable > 1) confidence = "high";
+      else if (poolTvl > 1000 && spreadPct > 2 && netProfitAtProfitable > 0.5) confidence = "medium";
 
       // Direction
       const buyOn = spreadPct > 0 ? `${bridge.chain} (external)` : "GalaSwap DEX";
@@ -198,6 +235,9 @@ export async function GET() {
       // Notes
       const notes: string[] = [];
       if (!exitBridgeable) notes.push(`⚠️ ${exitAsset} not bridgeable back`);
+      if (poolTvl < 1000) notes.push(`⚠️ Very low TVL ($${poolTvl.toFixed(0)})`);
+      if (poolTvl < 100) notes.push(`🚫 Pool nearly empty`);
+      if (breakevenTrade < 100 && poolTvl > 0) notes.push(`Breakeven ~$${breakevenTrade.toFixed(0)}`);
 
       opportunities.push({
         id: `${poolId}-${sym}`,
@@ -206,8 +246,8 @@ export async function GET() {
         tokenB: exitAsset,
         pairName,
         poolFee: Math.round(poolFee * 100) / 100,
-        poolTvl: 0,
-        poolVol1d: tokData.volume24h || 0,
+        poolTvl: Math.round(poolTvl),
+        poolVol1d: Math.round(poolVol1d),
         token: sym,
         tokenImage: tokData.image || "",
         galaDexPrice: galaDexPriceUsd,
@@ -222,8 +262,8 @@ export async function GET() {
         exitAssetBridgeChain: exitBridgeInfo?.chain || "unknown",
         breakevenTrade: Math.round(breakevenTrade),
         profitableTrade: Math.round(profitableTrade),
-        impactAtBreakeven: 0,
-        impactAtProfitable: 0,
+        impactAtBreakeven: Math.round(impactAtBreakeven * 100) / 100,
+        impactAtProfitable: Math.round(impactAtProfitable * 100) / 100,
         netProfitAtProfitable: Math.round(netProfitAtProfitable * 100) / 100,
         confidence,
         notes: notes.join(" | "),
