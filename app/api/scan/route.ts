@@ -202,8 +202,7 @@ export async function GET() {
       const totalSideTvl = token0TvlUsd + token1TvlUsd;
       const maxSideRatio = totalSideTvl > 0 ? Math.max(token0TvlUsd, token1TvlUsd) / totalSideTvl : 0;
 
-      // Skip heavily imbalanced pools (but only if meaningful TVL)
-      if (maxSideRatio > IMBALANCE_THRESHOLD && totalSideTvl > 100) continue;
+      // Note: imbalance is flagged as warning, not filtered
 
       // Check both tokens
       for (const sym of [t0, t1]) {
