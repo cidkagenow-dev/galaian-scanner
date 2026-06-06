@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 const DEX_BACKEND = "https://dex-backend-prod1.defi.gala.com";
+const GALA_CONNECT_API = "https://connect-api.gala.com";
 const CG_API = "https://api.coingecko.com/api/v3";
 
 const IMBALANCE_THRESHOLD = 0.98; // Allow imbalanced pools, just flag them
@@ -77,6 +78,26 @@ async function fetchJSON<T>(url: string, timeout = 15000): Promise<T | null> {
   } catch { return null; }
 }
 
+// Fetch all GalaChain tokens from GalaConnect API (auto-discovery)
+async function fetchGalaTokens(): Promise<{cgIdMap: Map<string, string>, bridgeable: Set<string>}> {
+  const data = await fetchJSON<any>(`${GALA_CONNECT_API}/v1/tokens`);
+  const cgIdMap = new Map<string, string>();
+  const bridgeable = new Set<string>();
+  if (data?.tokens) {
+    for (const tok of data.tokens) {
+      const sym = tok.symbol;
+      const ps = tok.priceSymbol;
+      const external = tok.priceIsKnownToExternalPriceSource;
+      // priceSymbol is the CoinGecko ID
+      if (ps && external && ps === ps.toLowerCase() && !ps.includes("|")) {
+        cgIdMap.set(sym, ps);
+        bridgeable.add(sym);
+      }
+    }
+  }
+  return { cgIdMap, bridgeable };
+}
+
 async function fetchCGPrices(ids: string[]): Promise<Map<string, number>> {
   if (!ids.length) return new Map();
   // Batch in chunks of 25 to avoid URL length issues
@@ -114,16 +135,21 @@ export async function GET(request: Request) {
   try {
     const startTime = Date.now();
 
-    const dexPools = await fetchAllPools();
+    const [galaTokens, dexPools] = await Promise.all([
+      fetchGalaTokens(),
+      fetchAllPools(),
+    ]);
     if (!dexPools.length) throw new Error("Failed to fetch DEX pools");
 
-    // Build CG ID map from BRIDGEABLE + EXTRA_CG_IDS
+    // Build CG ID map: GalaConnect API (dynamic) + BRIDGEABLE (fallback)
     const cgIdMap = new Map<string, string>();
-    for (const [sym, info] of Object.entries(BRIDGEABLE)) {
-      cgIdMap.set(sym, info.cgId);
+    // GalaConnect API tokens (primary source — auto-updates)
+    for (const [sym, cgId] of galaTokens.cgIdMap) {
+      cgIdMap.set(sym, cgId);
     }
-    for (const [sym, cgId] of Object.entries(EXTRA_CG_IDS)) {
-      if (!cgIdMap.has(sym)) cgIdMap.set(sym, cgId);
+    // BRIDGEABLE fallback (for tokens not in GalaConnect API)
+    for (const [sym, info] of Object.entries(BRIDGEABLE)) {
+      if (!cgIdMap.has(sym)) cgIdMap.set(sym, info.cgId);
     }
 
     // Fetch CG prices
