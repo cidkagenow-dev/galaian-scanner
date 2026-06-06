@@ -348,6 +348,15 @@ export async function GET(request: Request) {
       timestamp: new Date().toISOString(),
       elapsed: Date.now() - startTime,
       poolCount: dexPools.length,
+      debug: {
+        galaConnectTokens: galaTokens.cgIdMap.size,
+        cgIdMapSize: cgIdMap.size,
+        cgPricesSize: cgPrices.size,
+        galaPriceMapSize: galaPriceMap.size,
+        sampleCgIds: allCgIds.slice(0, 5),
+        sampleCgPrices: Object.fromEntries([...cgPrices].slice(0, 5)),
+        sampleGalaPrices: Object.fromEntries([...galaPriceMap].slice(0, 5)),
+      },
       tokenCount: new Set(uniqueOpps.map(o => o.token)).size,
       opportunities: uniqueOpps,
       stats: {
