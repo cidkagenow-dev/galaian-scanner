@@ -67,15 +67,39 @@ const EXTRA_CG_IDS: Record<string, string> = {
   RBIT: "rbit",
 };
 
-async function fetchJSON<T>(url: string, timeout = 15000): Promise<T | null> {
+async function fetchJSON<T>(url: string, timeout = 15000, options?: RequestInit): Promise<T | null> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
-    const r = await fetch(url, { signal: controller.signal });
+    const r = await fetch(url, { ...options, signal: controller.signal });
     clearTimeout(timer);
     if (!r.ok) return null;
     return r.json();
   } catch { return null; }
+}
+
+// Fetch real-time GalaSwap prices from trade API (NOT stale explore API)
+async function fetchGalaSwapPrices(symbols: string[]): Promise<Map<string, number>> {
+  if (!symbols.length) return new Map();
+  const prices = new Map<string, number>();
+  // Token format: SYMBOL$Unit$none$none
+  const tokens = symbols.map(s => `${s}$Unit$none$none`);
+  const data = await fetchJSON<any>(
+    `${DEX_BACKEND}/v1/trade/price-multiple`,
+    15000,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tokens }),
+    }
+  );
+  if (data?.data) {
+    for (let i = 0; i < symbols.length; i++) {
+      const price = parseFloat(data.data[i]);
+      if (price > 0) prices.set(symbols[i], price);
+    }
+  }
+  return prices;
 }
 
 // Fetch all GalaChain tokens from GalaConnect API (auto-discovery)
@@ -157,46 +181,40 @@ export async function GET(request: Request) {
     const cgPrices = await fetchCGPrices(allCgIds);
 
     // ═══════════════════════════════════════════════════════════════
-    // PRICE ENGINE: Calculate REAL GalaSwap prices from pool reserves
-    // Use CoinGecko ONLY as comparison target, not as GalaSwap price
+    // PRICE ENGINE: Real-time GalaSwap prices from trade API
+    // Falls back to reserve-derived prices for tokens not in trade API
     // ═══════════════════════════════════════════════════════════════
 
-    // Step 1: Seed galaPriceMap with CoinGecko prices for ANCHOR tokens only
-    // Anchors = tokens where CG price IS the GalaSwap price (major tokens, stablecoins)
+    // Step 1: Fetch REAL-TIME prices from /v1/trade/price-multiple
+    const allPoolTokens = new Set<string>();
+    for (const pool of dexPools) {
+      allPoolTokens.add(pool.token0);
+      allPoolTokens.add(pool.token1);
+    }
+    const galaSwapPrices = await fetchGalaSwapPrices([...allPoolTokens]);
+
+    // Step 2: Seed galaPriceMap with real-time GalaSwap prices
     const galaPriceMap = new Map<string, number>();
-    const ANCHOR_CG_IDS = new Set([
-      "gala", "tether", "usd-coin", "ethereum", "bitcoin", "solana",
-      "binancecoin", "ripple", "tron", "the-open-network",
-    ]);
-    for (const [sym, cgId] of cgIdMap) {
-      if (ANCHOR_CG_IDS.has(cgId)) {
-        const cgPrice = cgPrices.get(cgId);
-        if (cgPrice && cgPrice > 0) {
-          galaPriceMap.set(sym, cgPrice);
-        }
-      }
+    for (const [sym, price] of galaSwapPrices) {
+      galaPriceMap.set(sym, price);
     }
 
-    // Step 2: Derive GalaSwap prices from pool reserves using anchors
-    // Formula: if we know t0_price (anchor), then:
-    //   t1_price = (t0_reserves * t0_price) / t1_reserves
+    // Step 3: For tokens not in trade API, derive from pool reserves using known prices
     for (let round = 0; round < 5; round++) {
       for (const pool of dexPools) {
         const t0 = pool.token0;
         const t1 = pool.token1;
-        const r0 = pool.token0Tvl || 0;  // raw token0 reserves
-        const r1 = pool.token1Tvl || 0;  // raw token1 reserves
+        const r0 = pool.token0Tvl || 0;
+        const r1 = pool.token1Tvl || 0;
         if (r0 <= 0 || r1 <= 0) continue;
 
         const has0 = galaPriceMap.has(t0);
         const has1 = galaPriceMap.has(t1);
 
         if (has0 && !has1) {
-          const t0Price = galaPriceMap.get(t0)!;
-          galaPriceMap.set(t1, (r0 * t0Price) / r1);
+          galaPriceMap.set(t1, (r0 * galaPriceMap.get(t0)!) / r1);
         } else if (!has0 && has1) {
-          const t1Price = galaPriceMap.get(t1)!;
-          galaPriceMap.set(t0, (r1 * t1Price) / r0);
+          galaPriceMap.set(t0, (r1 * galaPriceMap.get(t1)!) / r0);
         }
       }
     }
