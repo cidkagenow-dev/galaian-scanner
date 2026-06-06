@@ -156,67 +156,45 @@ export async function GET(request: Request) {
     const allCgIds = [...new Set(cgIdMap.values())];
     const cgPrices = await fetchCGPrices(allCgIds);
 
-    // Build galaPrice map from DEX pool data
+    // ═══════════════════════════════════════════════════════════════
+    // PRICE ENGINE: Calculate REAL prices from pool reserves + CG anchor
+    // DEX backend tokenPrice is often stale — we derive from reserves instead
+    // ═══════════════════════════════════════════════════════════════
+
+    // Step 1: Seed galaPriceMap with CoinGecko prices for known tokens
     const galaPriceMap = new Map<string, number>();
-    for (const pool of dexPools) {
-      const t0 = pool.token0;
-      const t1 = pool.token1;
-      const p0 = pool.token0Price ? parseFloat(pool.token0Price) : 0;
-      const p1 = pool.token1Price ? parseFloat(pool.token1Price) : 0;
-      // Use the price from the highest-TVL pool for each token
-      if (p0 > 0) {
-        const existing = galaPriceMap.get(t0);
-        if (!existing || pool.tvl > (pool._tvl0 || 0)) galaPriceMap.set(t0, p0);
-      }
-      if (p1 > 0) {
-        const existing = galaPriceMap.get(t1);
-        if (!existing || pool.tvl > (pool._tvl1 || 0)) galaPriceMap.set(t1, p1);
+    for (const [sym, cgId] of cgIdMap) {
+      const cgPrice = cgPrices.get(cgId);
+      if (cgPrice && cgPrice > 0) {
+        galaPriceMap.set(sym, cgPrice);
       }
     }
 
-    // Build DEX pool map
-    const dexPoolMap = new Map<string, any>();
-    for (const pool of dexPools) {
-      const key = pool.poolName || `${pool.token0}/${pool.token1}`;
-      dexPoolMap.set(key, pool);
-    }
-
-    // Phase 1: Derive prices for tokens without galaPrice using pool ratios
-    // Iteratively propagate prices through pool graph
-    for (let round = 0; round < 3; round++) {
+    // Step 2: Derive prices from pool reserves using CoinGecko anchors
+    // Formula: if we know t0_price (from CG), then:
+    //   t1_price = (t0_reserves * t0_price) / t1_reserves
+    // This gives the REAL price based on actual pool state, not stale backend data
+    for (let round = 0; round < 5; round++) {
       for (const pool of dexPools) {
         const t0 = pool.token0;
         const t1 = pool.token1;
-        const p0 = pool.token0Price ? parseFloat(pool.token0Price) : 0;
-        const p1 = pool.token1Price ? parseFloat(pool.token1Price) : 0;
-        
-        if (p0 > 0 && p1 > 0) {
-          const has0 = galaPriceMap.has(t0);
-          const has1 = galaPriceMap.has(t1);
-          
-          if (has0 && !has1) {
-            // t0 price known, derive t1: t1_price = t0_price * (p0/p1)
-            // Actually: if 1 t0 = (p0/p1) t1 in value, then t1_usd = t0_usd * p1/p0
-            // Wait - token0Price and token1Price are the prices in the other token
-            // If token0Price = 0.0025 means 1 token0 = 0.0025 token1
-            // So value of 1 token1 = value of token0 / 0.0025
-            const t0Usd = galaPriceMap.get(t0)!;
-            const t1Usd = t0Usd / p0 * p1; // Hmm, need to think about this
-            // Actually: p0 = how many token1 per token0. So 1 t0 = p0 * t1
-            // If t0 is worth $X, then 1 t1 = $X / p0
-            // Wait no. If token0Price = "0.00252722" for GALA in GALA/GWBTC pool
-            // And token1Price = "60836.05" for GWBTC
-            // GALA price = $0.0025, GWBTC price = $60836
-            // 1 GALA = 0.00252722 GWBTC → $0.0025 * (1/0.00252722) = ... no
-            // Actually the prices ARE in USD from the DEX backend
-            // p0 = USD price of token0, p1 = USD price of token1
-            // Let me verify: GALA token0Price = 0.00252722 (matches galaPrice $0.0025)
-            // GWBTC token1Price = 60836.05 (matches galaPrice $60582)
-            // Yes! token0Price and token1Price are USD prices
-            galaPriceMap.set(t1, p1);
-          } else if (!has0 && has1) {
-            galaPriceMap.set(t0, p0);
-          }
+        const r0 = pool.token0Tvl || 0;  // raw token0 reserves
+        const r1 = pool.token1Tvl || 0;  // raw token1 reserves
+        if (r0 <= 0 || r1 <= 0) continue;
+
+        const has0 = galaPriceMap.has(t0);
+        const has1 = galaPriceMap.has(t1);
+
+        if (has0 && !has1) {
+          // We know t0 price → derive t1 from pool ratio
+          const t0Price = galaPriceMap.get(t0)!;
+          const t1Derived = (r0 * t0Price) / r1;
+          galaPriceMap.set(t1, t1Derived);
+        } else if (!has0 && has1) {
+          // We know t1 price → derive t0 from pool ratio
+          const t1Price = galaPriceMap.get(t1)!;
+          const t0Derived = (r1 * t1Price) / r0;
+          galaPriceMap.set(t0, t0Derived);
         }
       }
     }
