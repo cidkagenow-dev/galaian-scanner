@@ -157,23 +157,29 @@ export async function GET(request: Request) {
     const cgPrices = await fetchCGPrices(allCgIds);
 
     // ═══════════════════════════════════════════════════════════════
-    // PRICE ENGINE: Calculate REAL prices from pool reserves + CG anchor
-    // DEX backend tokenPrice is often stale — we derive from reserves instead
+    // PRICE ENGINE: Calculate REAL GalaSwap prices from pool reserves
+    // Use CoinGecko ONLY as comparison target, not as GalaSwap price
     // ═══════════════════════════════════════════════════════════════
 
-    // Step 1: Seed galaPriceMap with CoinGecko prices for known tokens
+    // Step 1: Seed galaPriceMap with CoinGecko prices for ANCHOR tokens only
+    // Anchors = tokens where CG price IS the GalaSwap price (major tokens, stablecoins)
     const galaPriceMap = new Map<string, number>();
+    const ANCHOR_CG_IDS = new Set([
+      "gala", "tether", "usd-coin", "ethereum", "bitcoin", "solana",
+      "binancecoin", "ripple", "tron", "the-open-network",
+    ]);
     for (const [sym, cgId] of cgIdMap) {
-      const cgPrice = cgPrices.get(cgId);
-      if (cgPrice && cgPrice > 0) {
-        galaPriceMap.set(sym, cgPrice);
+      if (ANCHOR_CG_IDS.has(cgId)) {
+        const cgPrice = cgPrices.get(cgId);
+        if (cgPrice && cgPrice > 0) {
+          galaPriceMap.set(sym, cgPrice);
+        }
       }
     }
 
-    // Step 2: Derive prices from pool reserves using CoinGecko anchors
-    // Formula: if we know t0_price (from CG), then:
+    // Step 2: Derive GalaSwap prices from pool reserves using anchors
+    // Formula: if we know t0_price (anchor), then:
     //   t1_price = (t0_reserves * t0_price) / t1_reserves
-    // This gives the REAL price based on actual pool state, not stale backend data
     for (let round = 0; round < 5; round++) {
       for (const pool of dexPools) {
         const t0 = pool.token0;
@@ -186,15 +192,11 @@ export async function GET(request: Request) {
         const has1 = galaPriceMap.has(t1);
 
         if (has0 && !has1) {
-          // We know t0 price → derive t1 from pool ratio
           const t0Price = galaPriceMap.get(t0)!;
-          const t1Derived = (r0 * t0Price) / r1;
-          galaPriceMap.set(t1, t1Derived);
+          galaPriceMap.set(t1, (r0 * t0Price) / r1);
         } else if (!has0 && has1) {
-          // We know t1 price → derive t0 from pool ratio
           const t1Price = galaPriceMap.get(t1)!;
-          const t0Derived = (r1 * t1Price) / r0;
-          galaPriceMap.set(t0, t0Derived);
+          galaPriceMap.set(t0, (r1 * t1Price) / r0);
         }
       }
     }
