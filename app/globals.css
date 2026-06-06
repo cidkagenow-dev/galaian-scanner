@@ -648,6 +648,11 @@ td {
   gap: 1rem;
 }
 
+.detail-group {
+  min-width: 0;
+  overflow: hidden;
+}
+
 .detail-group label {
   font-size: 0.7rem;
   color: var(--text-muted);
@@ -660,6 +665,10 @@ td {
 .detail-group .val {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+  min-width: 0;
 }
 
 /* Pool Balance Detail */
