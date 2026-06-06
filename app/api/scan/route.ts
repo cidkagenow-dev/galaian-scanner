@@ -268,8 +268,11 @@ export async function GET(request: Request) {
         const isToken0 = t0 === sym;
         const sellSideTvl = isToken0 ? token0TvlUsd : token1TvlUsd;
         const buySideTvl = isToken0 ? token1TvlUsd : token0TvlUsd;
+        // Exit asset = the token you RECEIVE after selling into the pool
+        // Constraint: trade size limited by exit asset liquidity
+        const exitSideTvl = rawSpread >= 0 ? buySideTvl : sellSideTvl;
 
-        const effectiveLiq = rawSpread >= 0 ? sellSideTvl * 0.15 : buySideTvl * 0.15;
+        const effectiveLiq = Math.min(sellSideTvl, exitSideTvl) * 0.15;
         const breakevenTrade = profitPct > poolFee && effectiveLiq > 0
           ? (profitPct - poolFee) / 100 * 2 * effectiveLiq
           : 0;
@@ -289,12 +292,15 @@ export async function GET(request: Request) {
         const exitBridge = BRIDGEABLE[exitAsset];
         const exitBridgeable = BRIDGEABLE_BACK.has(exitAsset);
 
+        // Buy/Sell direction: clear token + platform
+        // rawSpread >= 0 → GalaSwap overvalued → buy token cheap externally, sell on GalaSwap
+        // rawSpread < 0 → GalaSwap undervalued → buy token cheap on GalaSwap, sell externally
         const buyOn = rawSpread >= 0
-          ? (symBridge ? `${symBridge.chain} (external)` : "External")
-          : "GalaSwap DEX";
+          ? `Buy ${sym} on ${symBridge ? symBridge.chain : 'External'}`
+          : `Buy ${sym} on GalaSwap`;
         const sellOn = rawSpread >= 0
-          ? "GalaSwap DEX"
-          : (symBridge ? `${symBridge.chain} (external)` : "External");
+          ? `Sell ${sym} on GalaSwap`
+          : `Sell ${sym} on ${symBridge ? symBridge.chain : 'External'}`;
         const bridgeInfo = symBridge
           ? `${symBridge.bridge} (${symBridge.chain}↔GalaChain)`
           : "Not bridgeable";
