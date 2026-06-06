@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 
-const ARB_API = "https://arb.gala.com";
 const DEX_BACKEND = "https://dex-backend-prod1.defi.gala.com";
 const CG_API = "https://api.coingecko.com/api/v3";
 
@@ -115,38 +114,37 @@ export async function GET(request: Request) {
   try {
     const startTime = Date.now();
 
-    const [arbTokens, dexPools] = await Promise.all([
-      fetchJSON<any[]>(`${ARB_API}/api/tokens`),
-      fetchAllPools(),
-    ]);
+    const dexPools = await fetchAllPools();
+    if (!dexPools.length) throw new Error("Failed to fetch DEX pools");
 
-    if (!arbTokens) throw new Error("Failed to fetch arb tokens");
-
-    // Build token data map from arb API
-    const tokenData = new Map<string, any>();
-    for (const tok of arbTokens) tokenData.set(tok.symbol, tok);
-
-    // Build CG ID map: merge arb API + BRIDGEABLE + EXTRA_CG_IDS
-    const cgIdMap = new Map<string, string>(); // symbol -> coingecko id
-    for (const tok of arbTokens) {
-      if (tok.coinGeckoId) cgIdMap.set(tok.symbol, tok.coinGeckoId);
-    }
+    // Build CG ID map from BRIDGEABLE + EXTRA_CG_IDS
+    const cgIdMap = new Map<string, string>();
     for (const [sym, info] of Object.entries(BRIDGEABLE)) {
-      if (!cgIdMap.has(sym)) cgIdMap.set(sym, info.cgId);
+      cgIdMap.set(sym, info.cgId);
     }
     for (const [sym, cgId] of Object.entries(EXTRA_CG_IDS)) {
       if (!cgIdMap.has(sym)) cgIdMap.set(sym, cgId);
     }
 
-    // Fetch CG prices for all known IDs
-    const allCgIds = [...new Set([...cgIdMap.values(), ...Array.from(tokenData.values()).map((t: any) => t.coinGeckoId).filter(Boolean)])];
+    // Fetch CG prices
+    const allCgIds = [...new Set(cgIdMap.values())];
     const cgPrices = await fetchCGPrices(allCgIds);
 
-    // Build galaPrice map from arb API
-    const galaPriceMap = new Map<string, number>(); // symbol -> USD price on GalaSwap
-    for (const tok of arbTokens) {
-      if (tok.galaPrice && tok.galaPrice > 0) {
-        galaPriceMap.set(tok.symbol, tok.galaPrice);
+    // Build galaPrice map from DEX pool data
+    const galaPriceMap = new Map<string, number>();
+    for (const pool of dexPools) {
+      const t0 = pool.token0;
+      const t1 = pool.token1;
+      const p0 = pool.token0Price ? parseFloat(pool.token0Price) : 0;
+      const p1 = pool.token1Price ? parseFloat(pool.token1Price) : 0;
+      // Use the price from the highest-TVL pool for each token
+      if (p0 > 0) {
+        const existing = galaPriceMap.get(t0);
+        if (!existing || pool.tvl > (pool._tvl0 || 0)) galaPriceMap.set(t0, p0);
+      }
+      if (p1 > 0) {
+        const existing = galaPriceMap.get(t1);
+        if (!existing || pool.tvl > (pool._tvl1 || 0)) galaPriceMap.set(t1, p1);
       }
     }
 
@@ -228,11 +226,6 @@ export async function GET(request: Request) {
         if (!cgId) continue;
 
         let cgPrice = cgPrices.get(cgId) || 0;
-        // Fallback: try arb API coinGeckoPrice
-        if (!cgPrice) {
-          const arbTok = tokenData.get(sym);
-          cgPrice = arbTok?.coinGeckoPrice || 0;
-        }
         if (!cgPrice) continue;
 
         // Skip if wildly different (data error)
