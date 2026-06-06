@@ -252,9 +252,9 @@ export async function GET(request: Request) {
         let cgPrice = cgPrices.get(cgId) || 0;
         if (!cgPrice) continue;
 
-        // Skip if wildly different (data error)
+        // Skip if wildly different (likely wrong CG ID mapping)
         const priceRatio = galaPrice / cgPrice;
-        if (priceRatio > 100 || priceRatio < 0.01) continue;
+        if (priceRatio > 10 || priceRatio < 0.1) continue;
 
         // Calculate spread
         const rawSpread = ((galaPrice - cgPrice) / cgPrice) * 100;
